@@ -1,0 +1,150 @@
+{
+  "version": 2,
+  "goal": 85,
+  "score": 32,
+  "verdict": "HOLD",
+  "blockers": 6,
+  "nits": 10,
+  "summary": "Critical crash risks, silent boot failures, and build artifacts in git. Zero tests.",
+  "top_actions": [
+    "Fix unhandled TypeErrors in json.loads and widen exception guards in server.py",
+    "Add logging to the bare except block in http_shim.py to stop silent boot failures",
+    "Remove build/ directory from source control and add to .gitignore"
+  ],
+  "reviewers": {
+    "roaster": {
+      "summary": "Build junk in git, uncaught TypeErrors, leaky logs, weak error handling.",
+      "findings": [
+        {
+          "sev": "high",
+          "where": "server.py:_run_query",
+          "issue": "json.loads on non-string filters/sorts raises TypeError, not caught by _call_tool's (KeyError, ValueError) guard",
+          "say": "json.loads eats strings, not dicts. TypeError ain't ValueError\u2014boom, unhandled. Fix guard.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "high",
+          "where": "http_shim.py:module level",
+          "issue": "except Exception swallows startup failures silently with no logging",
+          "say": "Swallowing all startup exceptions without a log burp? 503 mystery meat. Log the wound.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "high",
+          "where": "server.py:_run_query / _call_tool",
+          "issue": "json.loads on non-string input raises TypeError, not caught",
+          "say": "Pass a number for filters? `json.loads` throws TypeError, catch block snoozes. Crash.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "med",
+          "where": "server.py:build_server",
+          "issue": "httpx.AsyncClient leaks if telemetry.setup_telemetry raises after client creation",
+          "say": "Create client then crash on telemetry? Socket go brrr, never closed. Re-order or try/finally.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "server.py:_call_tool",
+          "issue": "Narrow except (KeyError, ValueError) lets other handler exceptions escape as unhandled errors",
+          "say": "Only catching KeyError and ValueError? One surprise TypeError and your MCP frame weeps. Widen net.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "build/lib/modular_bos_mcp/schema.py",
+          "issue": "Generated build artifact committed to source control",
+          "say": "Build folder in git? Stale bread. Ignore it.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "telemetry.py:track",
+          "issue": "json.dumps on tool args crashes if values aren't JSON-serializable",
+          "say": "One weird datetime and your span dies first.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "src/modular_bos_mcp/omni_client.py:68-115",
+          "issue": "list_topics and validate_model assume resp is list or dict; crash otherwise",
+          "say": "Omni returns null? AttributeError party. Type-check your JSON, caveman.",
+          "tier": "nit"
+        }
+      ],
+      "parse_ok": true
+    },
+    "mammoth": {
+      "summary": "Artifacts committed, missing tests, swallowed errors, fragile types.",
+      "findings": [
+        {
+          "sev": "high",
+          "where": "build/lib/modular_bos_mcp/server.py",
+          "issue": "Python build artifact committed to source control",
+          "say": "Commit build/ dir. Generated code in repo bad.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "high",
+          "where": "http_shim.py:48",
+          "issue": "Bare except Exception at boot swallows startup failures without logging",
+          "say": "Swallow boot error, no log. Blind when server sick.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "high",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/__init__.py",
+          "issue": "Build artifact directory committed to source control.",
+          "say": "Build lib must not live in repo. Remove and gitignore.",
+          "tier": "blocker"
+        },
+        {
+          "sev": "med",
+          "where": "server.py and http_shim.py",
+          "issue": "No unit tests for handlers, schema builders, or HTTP shim",
+          "say": "Zero tests. Ship without net.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "http_shim.py:44-51",
+          "issue": "Config parsing and server construction run at module import time",
+          "say": "Import-time side effects. Hard to test, hard to mock.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "server.py:411-415",
+          "issue": "Tool dispatch only catches KeyError/ValueError; other exceptions escape unhandled",
+          "say": "Catch too narrow. Unexpected errors leak out.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "server.py:95-180 area",
+          "issue": "Six Omni handlers duplicate identical telemetry/track + try/except boilerplate.",
+          "say": "DRY handler wrapping\u2014one decorator cuts six copy-paste error blocks.",
+          "tier": "nit"
+        },
+        {
+          "sev": "med",
+          "where": "server.py:_meta",
+          "issue": "Meta response leaks internal repo path and codename ('infra beaver cluster_mcp_grafana.py').",
+          "say": "Scrub internal repo paths from API surface; operators can read docs instead.",
+          "tier": "nit"
+        }
+      ],
+      "parse_ok": true
+    }
+  },
+  "meta": {
+    "models": {
+      "reviewers": "moonshotai/Kimi-K2.6",
+      "overseer": "google/gemma-4-31B-it"
+    },
+    "diff_bytes": 111888,
+    "truncated": false,
+    "chunks": 6,
+    "skipped_files": []
+  }
+}

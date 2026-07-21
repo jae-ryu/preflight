@@ -1,0 +1,54 @@
+  🚀 PREFLIGHT · convening the crew…
+
+════════════════════════════════════════════════════════════
+  🧑‍🚀 MISSION CONTROL — HOLD (13/100, goal 85)
+  ██░░░░░░░░░░░░░░░░░░
+  Critical correctness failures: build artifacts in repo, unhandled crashes, and missing test files.
+────────────────────────────────────────────────────────────
+  🔥 ROASTER  Build artifacts committed, crashes unhandled, leaks lurk
+  🦣 MAMMOTH  Build artifacts committed. Leaky errors. Missing tests.
+
+  ⬆  RAISE THE SCORE
+     • Purge build/ artifacts from repo, fix .gitignore, and move source to src/ directory.
+     • Wrap OmniClient requests in broad RequestError catch to prevent crashes and ensure ok=false.
+     • Add missing test files referenced in BUILD.bazel and implement async client closure.
+════════════════════════════════════════════════════════════
+  🔥 ROASTER · 6 notes
+   HIGH BUILD.bazel and build/lib/
+        Source files committed under build/lib/ but BUILD expects src/; build artifacts in repo
+        “You parked source in build/lib/ but BUILD.bazel knocks on src/. Committed build artifacts? Repo sin. Move code to src/ and git rm build/.”
+   HIGH omni_client.py:_request
+        Only catches HTTPStatusError; network failures, timeouts, and JSON decode errors crash the tool
+        “Hugging HTTPStatusError while timeouts and network burps stroll past uncaught. Your facade promised ok=false, not exception fireworks. Catch RequestError too.”
+   MED  config.py:from_env
+        Empty omni_model_id allowed, producing invalid API URLs with double slashes
+        “Empty model_id walks right through validation, then every Omni URL gets a double-slash tattoo. Server starts happy, dies on first call. Check it.”
+   MED  config.py:log_path
+        Log directory never created; default relative path crashes on first write
+        “logs/requests.jsonl looks cute but you never mkdir. First span hits disk and server goes boom. Path.mkdir(parents=True, exist_ok=True). Now.”
+   MED  omni_client.py:list_topics / validate_model
+        resp.get() assumes dict without type check; unexpected JSON types cause AttributeError
+        “Calling .get() like resp is always a dict. Upstream sends null? AttributeError confetti. Verify isinstance(resp, dict) before you get greedy.”
+   MED  __main__.py:_run_stdio
+        OmniClient and httpx.AsyncClient are never closed; connection leak on shutdown
+        “You spawn a client then ghost it forever. No aclose, no context manager, just leaked sockets in a bow tie. Clean up your async toys.”
+  🦣 MAMMOTH · 6 notes
+   HIGH CloudInfra/mcp-servers/bos/.gitignore
+        build/ and dist/ not ignored; build artifacts are committed to the repository.
+        “Build artifacts leak into repo. Add build/ and dist/ to .gitignore, purge committed files.”
+   HIGH CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:47-57
+        Only httpx.HTTPStatusError is caught; timeouts and connection errors break the ok=false contract.
+        “Timeout and connection errors escape, break promised ok=false envelope.”
+   HIGH CloudInfra/mcp-servers/bos/BUILD.bazel
+        Test source files referenced in four test targets are absent from the diff.
+        “BUILD declares four tests, but test files missing from change.”
+   MED  CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/__main__.py:22-24
+        Omni client returned by build_server is discarded and never closed on shutdown.
+        “_omni discarded, aclose never called; connections and spans leak on exit.”
+   MED  CloudInfra/mcp-servers/bos/README.md:86
+        README references a deploy/ directory that does not exist in the diff.
+        “README points to deploy/ directory, but deploy/ not in change.”
+   LOW  CloudInfra/mcp-servers/bos/.gitignore:7
+        src/*.egg-info/ ignore pattern is too narrow for egg-info in other paths.
+        “egg-info ignore too narrow; use **/*.egg-info/ or broaden pattern.”
+

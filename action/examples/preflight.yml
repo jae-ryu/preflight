@@ -1,0 +1,36 @@
+# Preflight Council — drop this file in .github/workflows/preflight.yml
+# Opt in for a whole repo in 2 minutes:
+#   1. Copy this file to .github/workflows/preflight.yml
+#   2. Add a repo secret named MODULAR_API_KEY (Settings -> Secrets -> Actions)
+# That's it. Every PR gets one council comment with a GO / HOLD verdict.
+#
+# Optional: add a .council.yml at your repo root to set the goal / filter paths:
+#   goal: 90
+#   paths:
+#     - "src/"
+#     - "*.py"
+
+name: Preflight Council
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  council:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preflight council review
+        uses: modular/preflight/action@main
+        with:
+          modular_api_key: ${{ secrets.MODULAR_API_KEY }}
+          goal: "85"

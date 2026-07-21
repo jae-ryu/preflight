@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "goal": 85,
+  "score": 13,
+  "verdict": "HOLD",
+  "summary": "Critical correctness failures: build artifacts in repo, unhandled crashes, and missing test files.",
+  "top_actions": [
+    "Purge build/ artifacts from repo, fix .gitignore, and move source to src/ directory.",
+    "Wrap OmniClient requests in broad RequestError catch to prevent crashes and ensure ok=false.",
+    "Add missing test files referenced in BUILD.bazel and implement async client closure."
+  ],
+  "reviewers": {
+    "roaster": {
+      "summary": "Build artifacts committed, crashes unhandled, leaks lurk",
+      "findings": [
+        {
+          "sev": "high",
+          "where": "BUILD.bazel and build/lib/",
+          "issue": "Source files committed under build/lib/ but BUILD expects src/; build artifacts in repo",
+          "say": "You parked source in build/lib/ but BUILD.bazel knocks on src/. Committed build artifacts? Repo sin. Move code to src/ and git rm build/."
+        },
+        {
+          "sev": "high",
+          "where": "omni_client.py:_request",
+          "issue": "Only catches HTTPStatusError; network failures, timeouts, and JSON decode errors crash the tool",
+          "say": "Hugging HTTPStatusError while timeouts and network burps stroll past uncaught. Your facade promised ok=false, not exception fireworks. Catch RequestError too."
+        },
+        {
+          "sev": "med",
+          "where": "config.py:from_env",
+          "issue": "Empty omni_model_id allowed, producing invalid API URLs with double slashes",
+          "say": "Empty model_id walks right through validation, then every Omni URL gets a double-slash tattoo. Server starts happy, dies on first call. Check it."
+        },
+        {
+          "sev": "med",
+          "where": "config.py:log_path",
+          "issue": "Log directory never created; default relative path crashes on first write",
+          "say": "logs/requests.jsonl looks cute but you never mkdir. First span hits disk and server goes boom. Path.mkdir(parents=True, exist_ok=True). Now."
+        },
+        {
+          "sev": "med",
+          "where": "omni_client.py:list_topics / validate_model",
+          "issue": "resp.get() assumes dict without type check; unexpected JSON types cause AttributeError",
+          "say": "Calling .get() like resp is always a dict. Upstream sends null? AttributeError confetti. Verify isinstance(resp, dict) before you get greedy."
+        },
+        {
+          "sev": "med",
+          "where": "__main__.py:_run_stdio",
+          "issue": "OmniClient and httpx.AsyncClient are never closed; connection leak on shutdown",
+          "say": "You spawn a client then ghost it forever. No aclose, no context manager, just leaked sockets in a bow tie. Clean up your async toys."
+        }
+      ],
+      "parse_ok": true
+    },
+    "mammoth": {
+      "summary": "Build artifacts committed. Leaky errors. Missing tests.",
+      "findings": [
+        {
+          "sev": "high",
+          "where": "CloudInfra/mcp-servers/bos/.gitignore",
+          "issue": "build/ and dist/ not ignored; build artifacts are committed to the repository.",
+          "say": "Build artifacts leak into repo. Add build/ and dist/ to .gitignore, purge committed files."
+        },
+        {
+          "sev": "high",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:47-57",
+          "issue": "Only httpx.HTTPStatusError is caught; timeouts and connection errors break the ok=false contract.",
+          "say": "Timeout and connection errors escape, break promised ok=false envelope."
+        },
+        {
+          "sev": "high",
+          "where": "CloudInfra/mcp-servers/bos/BUILD.bazel",
+          "issue": "Test source files referenced in four test targets are absent from the diff.",
+          "say": "BUILD declares four tests, but test files missing from change."
+        },
+        {
+          "sev": "med",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/__main__.py:22-24",
+          "issue": "Omni client returned by build_server is discarded and never closed on shutdown.",
+          "say": "_omni discarded, aclose never called; connections and spans leak on exit."
+        },
+        {
+          "sev": "med",
+          "where": "CloudInfra/mcp-servers/bos/README.md:86",
+          "issue": "README references a deploy/ directory that does not exist in the diff.",
+          "say": "README points to deploy/ directory, but deploy/ not in change."
+        },
+        {
+          "sev": "low",
+          "where": "CloudInfra/mcp-servers/bos/.gitignore:7",
+          "issue": "src/*.egg-info/ ignore pattern is too narrow for egg-info in other paths.",
+          "say": "egg-info ignore too narrow; use **/*.egg-info/ or broaden pattern."
+        }
+      ],
+      "parse_ok": true
+    }
+  },
+  "meta": {
+    "models": {
+      "reviewers": "moonshotai/Kimi-K2.6",
+      "overseer": "google/gemma-4-31B-it"
+    },
+    "diff_bytes": 111888,
+    "truncated": true
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "goal": 85,
+  "score": 96,
+  "verdict": "GO",
+  "blockers": 0,
+  "nits": 0,
+  "summary": "Tight diff, tests included, no correctness or design concerns. Cleared for launch.",
+  "top_actions": [],
+  "reviewers": {
+    "roaster": {
+      "summary": "Nothing to roast. Clean logic, guarded edges.",
+      "parse_ok": true,
+      "findings": []
+    },
+    "mammoth": {
+      "summary": "Well-structured, tested, documented. No notes.",
+      "parse_ok": true,
+      "findings": []
+    }
+  },
+  "meta": {
+    "models": {
+      "reviewers": "moonshotai/Kimi-K2.6",
+      "overseer": "google/gemma-4-31B-it"
+    },
+    "diff_bytes": 4213,
+    "truncated": false,
+    "chunks": 1,
+    "skipped_files": []
+  }
+}

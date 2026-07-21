@@ -1,0 +1,99 @@
+{
+  "version": 2,
+  "goal": 85,
+  "score": 45,
+  "verdict": "HOLD",
+  "blockers": 4,
+  "nits": 5,
+  "summary": "Build artifacts shipped as source, sockets leak, case-sensitive model check crashes every call. Not launch-ready.",
+  "top_actions": [
+    "Purge build/lib/ from git; move source to src/ and fix .gitignore so artifacts stay out",
+    "Close the OmniClient/httpx.AsyncClient with a context manager or try/finally in __main__.py",
+    "Fix validate_model's case-sensitive compare so real model IDs stop getting rejected"
+  ],
+  "reviewers": {
+    "roaster": {
+      "summary": "Model check case-broke; every request dies. Timeout env crashes boot.",
+      "parse_ok": true,
+      "findings": [
+        {
+          "sev": "high",
+          "tier": "blocker",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:110",
+          "issue": "validate_model compares the requested id against /v1/models with a case-sensitive ==, but the API returns lowercased ids, so every valid model is rejected and no request ever goes through",
+          "say": "You ask for Kimi-K2.6, API whispers back kimi-k2.6, your == says NOPE. Congrats, the client rejects 100% of real models. Lowercase both sides or use casefold()."
+        },
+        {
+          "sev": "high",
+          "tier": "blocker",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:64-70",
+          "issue": "response.json() is called before checking status; on a 5xx that returns an HTML error page this throws JSONDecodeError and swallows the real upstream failure",
+          "say": "Server hands you an HTML tombstone, you shove it into json() and faceplant. Check the status code BEFORE you parse, or you'll debug the wrong corpse forever."
+        },
+        {
+          "sev": "med",
+          "tier": "nit",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/config.py:52",
+          "issue": "int(os.environ['OMNI_TIMEOUT']) runs at import time with no guard; a value like '30s' crashes the whole server on boot with a raw ValueError",
+          "say": "One typo in an env var and the whole server refuses to wake up. Wrap the int() or default it — don't let a stray 's' brick the launch."
+        }
+      ]
+    },
+    "mammoth": {
+      "summary": "Build artifacts committed; client leaked; narrow catches; wrong exception family.",
+      "parse_ok": true,
+      "findings": [
+        {
+          "sev": "high",
+          "tier": "blocker",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/*",
+          "issue": "Source files committed under build/lib/ (setuptools artifacts) while BUILD.bazel expects src/; .gitignore omits build/",
+          "say": "Code lives in build/lib/. That is build artifact, not source. BUILD.bazel looks for src/. .gitignore blind to build/."
+        },
+        {
+          "sev": "high",
+          "tier": "blocker",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/__main__.py:20-25",
+          "issue": "OmniClient/httpx.AsyncClient returned by build_server is discarded and never closed, leaking TCP connections",
+          "say": "_omni born but never dies. Leak sockets. Need try/finally or context manager to aclose."
+        },
+        {
+          "sev": "med",
+          "tier": "nit",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:85-88",
+          "issue": "Only catches httpx.HTTPStatusError; transport errors (timeout, connect, network) leak as raw httpx exceptions instead of OmniClientError",
+          "say": "Catch only HTTPStatusError. Timeout and network blow up caller. Wrap all httpx.HTTPError."
+        },
+        {
+          "sev": "med",
+          "tier": "nit",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/config.py:45",
+          "issue": "Raises EnvironmentError (an OSError subclass) for missing config instead of ValueError or a domain-specific exception",
+          "say": "EnvironmentError means OS broke, not bad config. Wrong exception family. Use ValueError."
+        },
+        {
+          "sev": "med",
+          "tier": "nit",
+          "where": "CloudInfra/mcp-servers/bos/build/lib/modular_bos_mcp/omni_client.py:72-78",
+          "issue": "list_topics and validate_model silently handle polymorphic API responses without comments explaining shape variance",
+          "say": "API returns list or dict. No comment why. Magic parsing scares future maintainer."
+        },
+        {
+          "sev": "low",
+          "tier": "nit",
+          "where": "CloudInfra/mcp-servers/bos/BUILD.bazel:35",
+          "issue": "modular_py_binary server redundantly declares requirement(mcp) already transitively provided by :modular_bos_mcp",
+          "say": "Binary repeats mcp dep. Library already carries it. Clean up BUILD."
+        }
+      ]
+    }
+  },
+  "meta": {
+    "models": {
+      "reviewers": "moonshotai/Kimi-K2.6",
+      "overseer": "google/gemma-4-31B-it"
+    },
+    "diff_bytes": 111888,
+    "truncated": true
+  }
+}

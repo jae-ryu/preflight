@@ -1,0 +1,38 @@
+name: "Preflight Council"
+description: "A council of Modular Cloud models (Kimi K2.6 + Gemma 4) reviews your PR diff and calls GO / HOLD, then posts one delightful comment."
+branding:
+  icon: "rocket"
+  color: "purple"
+
+inputs:
+  modular_api_key:
+    description: "Modular Cloud API key (set as a repo secret and pass secrets.MODULAR_API_KEY)."
+    required: true
+  goal:
+    description: "Default goal score if the repo has no .council.yml. 0-100."
+    required: false
+    default: "85"
+  github_token:
+    description: "Token used to fetch the diff and upsert the PR comment."
+    required: false
+    default: ${{ github.token }}
+  art_base:
+    description: "Base raw URL for reaction GIFs. Defaults to this action repo's art/reactions on the checked-out ref."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Preflight council
+      shell: bash
+      env:
+        MODULAR_API_KEY: ${{ inputs.modular_api_key }}
+        GH_TOKEN: ${{ inputs.github_token }}
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        INPUT_GOAL: ${{ inputs.goal }}
+        INPUT_ART_BASE: ${{ inputs.art_base }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        python3 -m pip install --quiet --disable-pip-version-check pillow || true
+        bash "${GITHUB_ACTION_PATH:-$ACTION_PATH}/entrypoint.sh"

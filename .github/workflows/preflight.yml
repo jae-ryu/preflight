@@ -1,0 +1,29 @@
+name: Preflight Council
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  council:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Preflight council review
+        uses: ./action
+        with:
+          modular_api_key: ${{ secrets.MODULAR_API_KEY }}
+          goal: "85"
