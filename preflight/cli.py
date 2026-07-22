@@ -8,14 +8,19 @@ Exit codes: 0 = GO, 1 = HOLD, 2 = infrastructure failure.
 """
 import argparse
 import concurrent.futures as cf
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 
 import time
 
-from . import CONTRACT_VERSION, api, chunk, crew, rubric
+import datetime
+
+from . import CONTRACT_VERSION, api, chunk, config, crew, rubric, stats
 from .diffcap import DEFAULT_CAP, cap_diff, changed_files
 
 # --- terminal paint (ported from preflight-showcase/preflight.py) ---
@@ -244,21 +249,191 @@ def _read_diff(src):
         return f.read()
 
 
+# --- `preflight review <pr>`: the one-command entrypoint --------------------
+# Fetch a live PR, run the council, compose the comment, and (optionally) post
+# it — the whole thing in a single call. gh is the seam for GitHub I/O so tests
+# can stub it; posting is opt-in (--post) because it writes to a real PR.
+
+def _gh(args, stdin=None):
+    """Run `gh <args>` and return stdout. Raises APIError on any failure."""
+    try:
+        p = subprocess.run(["gh", *args], capture_output=True, text=True, input=stdin)
+    except FileNotFoundError:
+        raise api.APIError("gh CLI not found — install GitHub CLI to use `preflight review`")
+    if p.returncode != 0:
+        raise api.APIError(f"gh {' '.join(args)} failed: {p.stderr.strip()}")
+    return p.stdout
+
+
+def _repo_slug_from_url(url):
+    """`https://github.com/owner/repo/pull/12` -> `owner/repo` (or None)."""
+    m = __import__("re").search(r"github\.com/([^/]+/[^/]+)/pull/", url or "")
+    return m.group(1) if m else None
+
+
+def _fetch_pr(pr, repo=None):
+    """Return (diff, head_sha, changed_files, repo_slug) for a PR via gh."""
+    repo_args = ["--repo", repo] if repo else []
+    diff = _gh(["pr", "diff", str(pr), *repo_args])
+    meta = json.loads(_gh(["pr", "view", str(pr), *repo_args,
+                           "--json", "headRefOid,files,url"]))
+    head_sha = meta.get("headRefOid") or ""
+    files = [f["path"] for f in (meta.get("files") or []) if f.get("path")]
+    slug = repo or _repo_slug_from_url(meta.get("url", ""))
+    return diff, head_sha, files, slug
+
+
+def _upsert_comment(repo, pr, body):
+    """Post one council comment, updating the existing one (matched by MARKER)."""
+    marker = "<!-- preflight-council -->"
+    existing = _gh(["api", f"repos/{repo}/issues/{pr}/comments", "--paginate",
+                    "--jq", f'map(select(.body | contains("{marker}"))) | .[0].id']).strip()
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as fh:
+        fh.write(body)
+        body_path = fh.name
+    try:
+        if existing and existing != "null":
+            _gh(["api", "--method", "PATCH",
+                 f"repos/{repo}/issues/comments/{existing}", "-F", f"body=@{body_path}"])
+            return "updated"
+        _gh(["api", "--method", "POST",
+             f"repos/{repo}/issues/{pr}/comments", "-F", f"body=@{body_path}"])
+        return "posted"
+    finally:
+        os.unlink(body_path)
+
+
+def _load_composer():
+    """Import comment/composer.py (lives outside the package) as a module."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, "comment", "composer.py")
+    spec = importlib.util.spec_from_file_location("preflight_composer", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def review_command(args):
+    """End-to-end: fetch PR -> council -> compose -> print or post. Exit code."""
+    if not api.api_key():
+        print("set MODULAR_API_KEY", file=sys.stderr)
+        return 2
+
+    cfg = config.load(council_yml=args.council_yml, goal=args.goal, cap=args.cap)
+
+    try:
+        diff, head_sha, files, repo = _fetch_pr(args.pr, args.repo)
+    except api.APIError as e:
+        print(f"infrastructure failure: {e}", file=sys.stderr)
+        return 2
+
+    diff = config.filter_diff(diff, cfg.paths)
+    if not diff.strip():
+        print("no diff after path filtering — nothing to review", file=sys.stderr)
+        return 0
+
+    where = repo or "PR"
+    print(f"{paint('  🚀 PREFLIGHT', 'b', 'cyn')} "
+          f"{paint(f'· reviewing {where}#{args.pr} (goal {cfg.goal})…', 'dim')}")
+
+    try:
+        result, infra_ok = build_result(
+            diff, cfg.goal, cap=cfg.cap, repo_map=build_repo_map())
+    except api.APIError as e:
+        print(f"infrastructure failure: {e}", file=sys.stderr)
+        return 2
+
+    print(render(result))
+
+    if args.json_out:
+        with open(args.json_out, "w") as f:
+            json.dump(result, f, indent=2)
+            f.write("\n")
+
+    # Per-character telemetry: append this run to the crew stats ledger.
+    try:
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stats.append(result, diff=diff, repo=repo, pr=str(args.pr), ts=ts)
+    except OSError:
+        pass  # telemetry is best-effort; never fail a review over it
+
+    body = _load_composer().compose(
+        result, art_base=cfg.art_base, repo=repo, sha=head_sha, files=files)
+
+    if args.post:
+        try:
+            action = _upsert_comment(repo, args.pr, body)
+        except api.APIError as e:
+            print(f"infrastructure failure: {e}", file=sys.stderr)
+            return 2
+        print(paint(f"  ✅ council comment {action} on {where}#{args.pr}", "grn"))
+    else:
+        print(paint("\n  — comment preview (use --post to publish) —", "dim"))
+        print(body)
+
+    if not infra_ok:
+        print("infrastructure failure: both reviewers unparseable", file=sys.stderr)
+        return 2
+    return 0 if result["verdict"] == "GO" else 1
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
 
     parser = argparse.ArgumentParser(prog="preflight", description="Council PR reviewer on Modular Cloud.")
     sub = parser.add_subparsers(dest="cmd")
-    run = sub.add_parser("run", help="review a diff")
+    run = sub.add_parser("run", help="review a diff (file or stdin)")
     run.add_argument("diff", nargs="?", default="-", help="diff file, or - for stdin")
-    run.add_argument("--goal", type=int, default=80, help="repo-owner goal score (default 80)")
+    run.add_argument("--goal", type=int, default=config.DEFAULT_GOAL,
+                     help=f"repo-owner goal score (default {config.DEFAULT_GOAL})")
     run.add_argument("--json", dest="json_out", metavar="OUT", help="also write the frozen JSON contract here")
     run.add_argument("--cap", type=int, default=DEFAULT_CAP, help=argparse.SUPPRESS)
 
-    # Bare invocation without the "run" subcommand behaves like "run" (prototype-friendly).
-    if argv and argv[0] not in ("run", "-h", "--help"):
+    rev = sub.add_parser("review", help="review a live PR end-to-end (fetch, score, comment)")
+    rev.add_argument("pr", help="PR number or URL")
+    rev.add_argument("--repo", default=None, help="owner/repo (inferred from cwd or the URL if omitted)")
+    rev.add_argument("--goal", type=int, default=None,
+                     help=f"override goal (default {config.DEFAULT_GOAL}, or .council.yml)")
+    rev.add_argument("--post", action="store_true",
+                     help="upsert the council comment on the PR (default: preview only)")
+    rev.add_argument("--json", dest="json_out", metavar="OUT", help="also write the frozen JSON contract here")
+    rev.add_argument("--council-yml", default=".council.yml", help=argparse.SUPPRESS)
+    rev.add_argument("--cap", type=int, default=None, help=argparse.SUPPRESS)
+
+    st = sub.add_parser("stats", help="show lifetime per-crew-member stats from the ledger")
+    st.add_argument("--json", dest="json_out", action="store_true", help="emit the aggregate as JSON")
+
+    # Bare invocation without a subcommand behaves like "run" (prototype-friendly).
+    if argv and argv[0] not in ("run", "review", "stats", "-h", "--help"):
         argv = ["run"] + argv
     args = parser.parse_args(argv)
+
+    if args.cmd == "review":
+        return review_command(args)
+
+    if args.cmd == "stats":
+        agg = stats.summarize()
+        if args.json_out:
+            print(json.dumps(agg, indent=2))
+            return 0
+        if not agg:
+            print("no runs recorded yet — run `preflight review <pr>` first")
+            return 0
+        print(paint("\n  🛰  COUNCIL CREW — lifetime stats", "b"))
+        for key, _emoji, _name in stats.CHARACTERS:
+            a = agg.get(key)
+            if not a:
+                continue
+            print(f"\n  {a['emoji']} {paint(a['name'], 'b')}")
+            print(f"     PRs reviewed : {a['prs_reviewed']}")
+            print(f"     LOC reviewed : {a['loc_reviewed']:,}")
+            print(f"     findings     : {a['findings']} ({a['blockers']} blockers)")
+            print(f"     avg harshness: {a['avg_harshness']}")
+            print(f"     avg note len : {a['avg_issue_len']} chars")
+            print(f"     avg time/PR  : {a['avg_ms_per_pr']/1000:.1f}s")
+            print(f"     reasoning tok: {a['reasoning_tokens']:,}")
+        print("")
+        return 0
 
     if args.cmd != "run":
         parser.print_help()
