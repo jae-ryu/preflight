@@ -20,7 +20,13 @@ REVIEWER_FMT = (
     "Report at most 3 gating problems (high sev — things that should block merge) "
     "and at most 5 nits (med/low). If you found more nits, keep only the ones a busy "
     "human would thank you for. Quality over volume — do NOT pad the list. "
-    "Most important first. No prose outside the JSON."
+    "Most important first. No prose outside the JSON.\n"
+    "SEVERITY ANCHORS — choose sev from this table, not vibes:\n"
+    "  high = wrong results, crashes, data loss, shared-state corruption, "
+    "security, unbounded resource leaks in long-lived code;\n"
+    "  med  = leaks/fragility with bounded blast radius, missing tests, "
+    "surprising-but-documented behavior;\n"
+    "  low  = style, docs, naming."
 )
 
 # Post-merge reviewer caps (per reviewer, TOTAL across all chunks).
@@ -160,8 +166,12 @@ ROASTER_SYS = (
     "CORRECTNESS problems: logic errors, edge cases that crash, wrong conditions, "
     "races, unhandled failures, resource leaks, security holes. Voice: punchy, "
     "funny, roasts the FLAW not the person, always ends useful. Caveman-brief. "
-    "Also ask of every function: does it do what its NAME promises? Semantic bugs "
-    "(function returns the wrong thing, ignores half its input) outrank idiom bugs. "
+    "MANDATORY FIRST STEP — before anything else, for EACH changed function: read "
+    "its name and signature, state what a caller would expect it to return/do, then "
+    "check the code delivers exactly that. A function whose return value or effect "
+    "does not match its name is a HIGH finding even if the code has no crash "
+    "(example: a load_config that returns a list of key names instead of the "
+    "config). Report it as sev high with where=<file>:<def line>. "
     "Never report the same root cause twice — pick the sharpest framing. "
     + REVIEWER_FMT
 )
@@ -196,11 +206,12 @@ MC_SYS = (
 )
 
 
-def _reviewer(name, system, diff, repo_map=None):
+def _reviewer(name, system, diff, repo_map=None, node=None):
     """Run one reviewer. Returns (name, {summary, findings, parse_ok}).
 
     When ``repo_map`` is given (Mammoth's zoom-out context), it is prepended to the
     user prompt as ``REPO MAP:\\n...\\n\\nDIFF:\\n...``. Roaster stays diff-only.
+    ``node`` is the trace label for this call (e.g. ``roaster-c1``).
     """
     if repo_map:
         user = f"REPO MAP:\n{repo_map}\n\nDIFF:\n{diff}"
@@ -208,7 +219,7 @@ def _reviewer(name, system, diff, repo_map=None):
         user = f"Review this diff:\n\n{diff}"
     data, ok = api.council_call(
         api.REVIEWER_MODEL, system, user,
-        api.REVIEWER_MAX_TOKENS)
+        api.REVIEWER_MAX_TOKENS, node=node)
     if not ok or data is None:
         return name, {"summary": "(could not parse)", "findings": [], "parse_ok": False}
     findings = data.get("findings") or []
@@ -222,8 +233,8 @@ def _reviewer(name, system, diff, repo_map=None):
 def run_reviewers(diff, executor, repo_map=None):
     """Run ROASTER and MAMMOTH concurrently. Returns (roaster, mammoth) dicts."""
     futs = [
-        executor.submit(_reviewer, "roaster", ROASTER_SYS, diff),
-        executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, diff, repo_map),
+        executor.submit(_reviewer, "roaster", ROASTER_SYS, diff, None, "roaster-c1"),
+        executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, diff, repo_map, "mammoth-c1"),
     ]
     reports = {}
     for fut in futs:
@@ -251,7 +262,8 @@ def compress_summaries(summaries):
     )
     try:
         resp = api.post_chat(api.OVERSEER_MODEL, system,
-                             f"Summaries:\n{joined}", 120, temperature=0.3)
+                             f"Summaries:\n{joined}", 120, temperature=0.3,
+                             node="chunk-summary")
         line = (api._message_of(resp).get("content") or "").strip()
         line = line.strip('"').strip()
         if line:
@@ -279,8 +291,10 @@ def run_reviewers_chunked(chunks, executor, repo_map=None):
     Returns (roaster, mammoth) merged reviewer dicts.
     """
     tasks = {
-        "roaster": [executor.submit(_reviewer, "roaster", ROASTER_SYS, ch) for ch in chunks],
-        "mammoth": [executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, ch, repo_map) for ch in chunks],
+        "roaster": [executor.submit(_reviewer, "roaster", ROASTER_SYS, ch, None, f"roaster-c{i + 1}")
+                    for i, ch in enumerate(chunks)],
+        "mammoth": [executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, ch, repo_map, f"mammoth-c{i + 1}")
+                    for i, ch in enumerate(chunks)],
     }
     out = {}
     for name in ("roaster", "mammoth"):
@@ -296,7 +310,7 @@ def run_overseer(goal, roaster, mammoth):
     data, ok = api.council_call(
         api.OVERSEER_MODEL, MC_SYS,
         f"Goal score is {goal}. Reviewer reports:\n{packet}",
-        api.OVERSEER_MAX_TOKENS)
+        api.OVERSEER_MAX_TOKENS, node="mission-control")
     if not ok or data is None:
         return {"score": 0, "verdict": "HOLD",
                 "summary": "overseer parse fail", "top_actions": []}, False

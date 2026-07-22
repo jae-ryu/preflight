@@ -13,8 +13,10 @@ import os
 import subprocess
 import sys
 
+import time
+
 from . import CONTRACT_VERSION, api, chunk, crew, rubric
-from .diffcap import DEFAULT_CAP, cap_diff
+from .diffcap import DEFAULT_CAP, cap_diff, changed_files
 
 # --- terminal paint (ported from preflight-showcase/preflight.py) ---
 _C = dict(dim="\033[2m", b="\033[1m", r="\033[0m", red="\033[31m", grn="\033[32m",
@@ -59,12 +61,57 @@ def build_repo_map(root=".", max_lines=120):
     return "\n".join(parts)
 
 
+def _base_node(row):
+    """Node label with any trailing ``-repair`` suffix removed."""
+    n = row.get("node", "") or ""
+    return n[:-len("-repair")] if n.endswith("-repair") else n
+
+
+def _assemble_trace(chunked):
+    """Snapshot api.TRACE and wire ``depends_on`` (a cli-layer concern, not api's).
+
+    - reviewer nodes (roaster-c*, mammoth-c*) depend on [] — or ["chunk-split"]
+      when the diff was chunked;
+    - mission-control depends on every reviewer node;
+    - chunk-summary depends on [] (it is fed the reviewer summaries in code).
+    """
+    trace = [dict(r) for r in api.TRACE]
+    reviewer_dep = ["chunk-split"] if chunked else []
+    reviewer_nodes = []
+    for row in trace:
+        base = _base_node(row)
+        if base.startswith("roaster-c") or base.startswith("mammoth-c"):
+            row["depends_on"] = list(reviewer_dep)
+            if not (row.get("node") or "").endswith("-repair"):
+                reviewer_nodes.append(row["node"])
+    for row in trace:
+        base = _base_node(row)
+        if base == "mission-control":
+            row["depends_on"] = list(reviewer_nodes)
+        elif base == "chunk-summary":
+            row["depends_on"] = []
+    return trace
+
+
+def _trace_totals(trace, wall_ms):
+    """Sum token usage across trace rows + carry the run wall time."""
+    prompt = sum((r.get("usage") or {}).get("prompt_tokens", 0) for r in trace)
+    completion = sum((r.get("usage") or {}).get("completion_tokens", 0) for r in trace)
+    reasoning = sum((r.get("usage") or {}).get("reasoning_tokens", 0) for r in trace)
+    return {
+        "wall_ms": wall_ms,
+        "tokens": {"prompt": prompt, "completion": completion, "reasoning": reasoning},
+    }
+
+
 def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
     """Run the whole council and assemble the frozen contract dict.
 
     Returns (result_dict, infra_ok). infra_ok is False when both reviewers failed
     to parse (treated as an infrastructure failure -> exit 2).
     """
+    api.reset_trace()
+    wall_start = time.time()
     diff_bytes = len(diff.encode())
 
     # Single-pass for small diffs; per-file map-reduce for big ones.
@@ -107,6 +154,10 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
         mc.get("score", 0), mc.get("verdict", "HOLD"),
         roaster["findings"], mammoth["findings"], goal)
 
+    wall_ms = int((time.time() - wall_start) * 1000)
+    trace = _assemble_trace(chunked=chunk_texts is not None)
+    totals = _trace_totals(trace, wall_ms)
+
     result = {
         "version": CONTRACT_VERSION,
         "goal": goal,
@@ -120,6 +171,8 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
             "roaster": roaster,
             "mammoth": mammoth,
         },
+        "trace": trace,
+        "totals": totals,
         "meta": {
             "models": {
                 "reviewers": api.REVIEWER_MODEL,
@@ -129,6 +182,7 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
             "truncated": truncated,
             "chunks": n_chunks,
             "skipped_files": skipped_files,
+            "changed_files": changed_files(diff),
         },
     }
     infra_ok = roaster["parse_ok"] or mammoth["parse_ok"]
