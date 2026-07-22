@@ -5,9 +5,28 @@ The council. Three characters, kept in voice — the voices ARE the product.
   🦣 MAMMOTH        (Kimi)  — fine-tooth comb: architecture, tests, docs, consistency.
   🧑‍🚀 MISSION CONTROL (Gemma) — overseer. Weighs both, scores, calls the launch.
 """
+import os
 import re
 
 from . import api
+
+# Per-character coaching hook. The overseer (or a feedback loop) can shape what a
+# reviewer looks for on the NEXT run without editing its charter, by exporting
+# PREFLIGHT_{ROASTER,MAMMOTH,MC}_EXTRA. The text is appended as a COACHING block
+# to that character's system prompt. Empty/unset = the charter stands unchanged.
+_COACH_ENV = {
+    "roaster": "PREFLIGHT_ROASTER_EXTRA",
+    "mammoth": "PREFLIGHT_MAMMOTH_EXTRA",
+    "mission-control": "PREFLIGHT_MC_EXTRA",
+}
+
+
+def coach(system, character):
+    """Append this run's coaching block to a character's system prompt, if any."""
+    extra = os.environ.get(_COACH_ENV.get(character, ""), "").strip()
+    if not extra:
+        return system
+    return f"{system}\n\nCOACHING FOR THIS RUN (overseer feedback — weigh it):\n{extra}"
 
 # Both reviewers emit the same JSON envelope. Findings feed the deterministic rubric.
 # Quality over volume: at most 3 gating problems + 5 nits. Don't spam the PR.
@@ -218,7 +237,7 @@ def _reviewer(name, system, diff, repo_map=None, node=None):
     else:
         user = f"Review this diff:\n\n{diff}"
     data, ok = api.council_call(
-        api.REVIEWER_MODEL, system, user,
+        api.REVIEWER_MODEL, coach(system, name), user,
         api.REVIEWER_MAX_TOKENS, node=node)
     if not ok or data is None:
         return name, {"summary": "(could not parse)", "findings": [], "parse_ok": False}
@@ -308,7 +327,7 @@ def run_overseer(goal, roaster, mammoth):
     import json
     packet = json.dumps({"goal": goal, "roaster": roaster, "mammoth": mammoth}, indent=1)
     data, ok = api.council_call(
-        api.OVERSEER_MODEL, MC_SYS,
+        api.OVERSEER_MODEL, coach(MC_SYS, "mission-control"),
         f"Goal score is {goal}. Reviewer reports:\n{packet}",
         api.OVERSEER_MAX_TOKENS, node="mission-control")
     if not ok or data is None:
