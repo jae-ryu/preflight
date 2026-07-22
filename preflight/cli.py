@@ -311,6 +311,8 @@ def _load_composer():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     path = os.path.join(root, "comment", "composer.py")
     spec = importlib.util.spec_from_file_location("preflight_composer", path)
+    if spec is None or spec.loader is None:
+        raise api.APIError(f"cannot load comment composer at {path}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
