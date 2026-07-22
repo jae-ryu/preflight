@@ -286,8 +286,20 @@ def _fetch_pr(pr, repo=None):
     return diff, head_sha, files, slug
 
 
+def _pr_number(pr):
+    """Coerce a PR ref to its numeric id for the GitHub REST path.
+
+    `review` accepts a number or a full URL; `gh pr diff/view` take either, but
+    the `issues/{n}/comments` API path needs the bare number.
+    """
+    s = str(pr)
+    m = re.search(r"/pull/(\d+)", s) or re.search(r"\d+", s)
+    return m.group(1) if (m and m.lastindex) else (m.group(0) if m else s)
+
+
 def _upsert_comment(repo, pr, body):
     """Post one council comment, updating the existing one (matched by MARKER)."""
+    pr = _pr_number(pr)
     marker = "<!-- preflight-council -->"
     existing = _gh(["api", f"repos/{repo}/issues/{pr}/comments", "--paginate",
                     "--jq", f'map(select(.body | contains("{marker}"))) | .[0].id']).strip()

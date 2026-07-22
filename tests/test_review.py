@@ -114,3 +114,9 @@ def test_repo_slug_parsed_from_url():
     assert cli._repo_slug_from_url(
         "https://github.com/modularml/modular/pull/92708") == "modularml/modular"
     assert cli._repo_slug_from_url("not a url") is None
+
+
+def test_pr_number_coerces_url_and_int():
+    assert cli._pr_number("https://github.com/o/r/pull/92708") == "92708"
+    assert cli._pr_number(5) == "5"
+    assert cli._pr_number("#123") == "123"
