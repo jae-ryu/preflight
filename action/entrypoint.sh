@@ -46,6 +46,13 @@ else
   gh pr diff "$PR_NUMBER" --repo "${GITHUB_REPOSITORY}" > "$RAW_DIFF"
 fi
 
+# Head sha of the PR (for file:line permalinks). Best-effort from the event JSON.
+HEAD_SHA=""
+if [[ -n "${GITHUB_EVENT_PATH:-}" && -f "${GITHUB_EVENT_PATH}" ]]; then
+  HEAD_SHA="$(python3 -c 'import json,os;e=json.load(open(os.environ["GITHUB_EVENT_PATH"]));print(e.get("pull_request",{}).get("head",{}).get("sha") or "")')"
+fi
+HEAD_SHA="${HEAD_SHA:-${GITHUB_SHA:-}}"
+
 # ---------- 2. .council.yml (goal + path filter) ----------
 COUNCIL_YML="${PREFLIGHT_COUNCIL_YML:-.council.yml}"
 FILTERED_DIFF="$WORK/filtered.diff"
@@ -84,8 +91,36 @@ if [[ -z "$ART_BASE" ]]; then
   ACTION_REPO="${GITHUB_ACTION_REPOSITORY:-${GITHUB_REPOSITORY:-jae-ryu/preflight}}"
   ART_BASE="https://raw.githubusercontent.com/${ACTION_REPO}/${GITHUB_ACTION_REF:-main}/art/reactions"
 fi
+RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID:-}"
 COMMENT_MD="$WORK/comment.md"
-python3 "$REPO_ROOT/comment/composer.py" "$RESULT_JSON" --art-base "$ART_BASE" -o "$COMMENT_MD"
+python3 "$REPO_ROOT/comment/composer.py" "$RESULT_JSON" --art-base "$ART_BASE" \
+  --repo "${GITHUB_REPOSITORY:-}" --sha "$HEAD_SHA" --run-url "$RUN_URL" -o "$COMMENT_MD"
+
+# ---------- 4b. persist the run as a build artifact (never committed to the repo) ----------
+# Write the frozen JSON + an envelope to the workspace; the workflow uploads it
+# with actions/upload-artifact. We NEVER commit run output or open a PR with it.
+RUN_ENVELOPE="${GITHUB_WORKSPACE:-$WORK}/preflight-run.json"
+TS="$(date -u +%FT%TZ)"
+PR="$PR_NUMBER" REPO="${GITHUB_REPOSITORY:-}" HEAD_SHA="$HEAD_SHA" \
+RUN_ID="${GITHUB_RUN_ID:-}" TS="$TS" RESULT_JSON="$RESULT_JSON" OUT="$RUN_ENVELOPE" \
+python3 - <<'PY'
+import json, os
+result = json.load(open(os.environ["RESULT_JSON"]))
+env = {
+    "schema": "preflight/run@2",
+    "pr": os.environ.get("PR") or None,
+    "repo": os.environ.get("REPO") or None,
+    "head_sha": os.environ.get("HEAD_SHA") or None,
+    "run_id": os.environ.get("RUN_ID") or None,
+    "ts": os.environ.get("TS") or None,
+}
+env.update(result)
+with open(os.environ["OUT"], "w") as f:
+    json.dump(env, f, indent=2)
+    f.write("\n")
+PY
+BYTES="$(wc -c < "$RUN_ENVELOPE" | tr -d ' ')"
+echo "saved preflight-run.json (${BYTES} bytes) -> artifact preflight-run-pr${PR_NUMBER}" >&2
 
 # ---------- 5. upsert ONE PR comment ----------
 if [[ "${PREFLIGHT_SKIP_POST:-}" == "1" ]]; then
