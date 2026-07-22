@@ -51,3 +51,20 @@ def test_filter_diff_keeps_matching_paths():
 
 def test_filter_diff_empty_patterns_passthrough():
     assert config.filter_diff(DIFF, []) == DIFF
+
+
+def test_council_yml_strips_inline_comments(tmp_path):
+    y = tmp_path / ".council.yml"
+    y.write_text("paths:\n  - src/   # only sources\n  - '*.py'  # python\n")
+    cfg = config.load(council_yml=str(y))
+    assert cfg.paths == ["src/", "*.py"]  # comments stripped, not part of path
+
+
+def test_filter_diff_glob_matches_nested():
+    diff = (
+        "diff --git a/deep/nested/x.py b/deep/nested/x.py\n@@ -1 +1 @@\n+keep\n"
+        "diff --git a/deep/y.txt b/deep/y.txt\n@@ -1 +1 @@\n+drop\n"
+    )
+    out = config.filter_diff(diff, ["*.py"])
+    assert "deep/nested/x.py" in out   # *.py now matches at any depth
+    assert "y.txt" not in out

@@ -45,6 +45,17 @@ class Config:
         return f"Config(goal={self.goal}, cap={self.cap}, paths={self.paths})"
 
 
+def _clean_item(s):
+    """Strip a trailing YAML comment then surrounding quotes from a list value.
+
+    `- "src/"   # only sources` -> `src/`. A leading `#` was already skipped as a
+    comment line; here we only drop an inline ` #...` tail (space-hash), so a `#`
+    inside a real path is preserved.
+    """
+    s = re.sub(r"\s+#.*$", "", s)
+    return s.strip().strip("'\"")
+
+
 def _parse_council_yml(path):
     """Read the optional .council.yml. Returns {} when absent/empty.
 
@@ -69,7 +80,7 @@ def _parse_council_yml(path):
             m = re.match(r"\s*paths\s*:\s*\[(.*)\]", line)  # inline list
             if m:
                 for item in m.group(1).split(","):
-                    item = item.strip().strip("'\"")
+                    item = _clean_item(item)
                     if item:
                         paths.append(item)
                 in_paths = False
@@ -80,7 +91,7 @@ def _parse_council_yml(path):
             if in_paths:
                 m = re.match(r"\s*-\s*(.+)", line)
                 if m:
-                    paths.append(m.group(1).strip().strip("'\""))
+                    paths.append(_clean_item(m.group(1)))
                 else:
                     in_paths = False
     if paths:
@@ -100,10 +111,14 @@ def load(council_yml=".council.yml", **overrides):
 
 
 def _file_matches(filepath, patterns):
+    base = filepath.rsplit("/", 1)[-1]
     for pat in patterns:
         if pat.endswith("/") and filepath.startswith(pat):
             return True
         if fnmatch.fnmatch(filepath, pat):
+            return True
+        # A slash-less glob like `*.py` should match at any depth, not only root.
+        if "/" not in pat and fnmatch.fnmatch(base, pat):
             return True
         if filepath.startswith(pat.rstrip("/") + "/"):
             return True
