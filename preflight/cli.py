@@ -9,6 +9,8 @@ Exit codes: 0 = GO, 1 = HOLD, 2 = infrastructure failure.
 import argparse
 import concurrent.futures as cf
 import json
+import os
+import subprocess
 import sys
 
 from . import CONTRACT_VERSION, api, chunk, crew, rubric
@@ -25,7 +27,39 @@ def paint(s, *k):
     return "".join(_C[x] for x in k) + s + _C["r"]
 
 
-def build_result(diff, goal, cap=DEFAULT_CAP, executor=None):
+def build_repo_map(root=".", max_lines=120):
+    """Cheap zoom-out context for Mammoth: `git ls-files` (pruned) + README head.
+
+    Best-effort — returns "" on any failure so a review never depends on it.
+    """
+    try:
+        files = subprocess.run(
+            ["git", "-C", root, "ls-files"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.splitlines()
+    except Exception:
+        return ""
+    files = [f for f in files if f]
+    listing = files[:max_lines]
+    parts = ["FILES:"] + listing
+    if len(files) > max_lines:
+        parts.append(f"...(+{len(files) - max_lines} more files)")
+    for readme in ("README.md", "README.rst", "README.txt", "README"):
+        path = os.path.join(root, readme)
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    head = [next(fh, "").rstrip("\n") for _ in range(30)]
+                parts.append("")
+                parts.append(f"README ({readme}, first 30 lines):")
+                parts.extend(line for line in head if line is not None)
+            except Exception:
+                pass
+            break
+    return "\n".join(parts)
+
+
+def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
     """Run the whole council and assemble the frozen contract dict.
 
     Returns (result_dict, infra_ok). infra_ok is False when both reviewers failed
@@ -52,12 +86,16 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None):
         executor = cf.ThreadPoolExecutor(max_workers=min(workers, 16))
     try:
         if chunk_texts is not None:
-            roaster, mammoth = crew.run_reviewers_chunked(chunk_texts, executor)
+            roaster, mammoth = crew.run_reviewers_chunked(chunk_texts, executor, repo_map)
         else:
-            roaster, mammoth = crew.run_reviewers(capped, executor)
+            roaster, mammoth = crew.run_reviewers(capped, executor, repo_map)
     finally:
         if own_executor:
             executor.shutdown(wait=True)
+
+    # Cross-reviewer dedupe: collapse issues both reviewers flagged so the rubric
+    # deducts once per unique issue and the composer can show both voices.
+    roaster, mammoth, _merged = crew.dedupe_cross(roaster, mammoth)
 
     # Deterministic tiering (code decides, not the reviewers).
     rubric.apply_tiers(roaster["findings"])
@@ -184,7 +222,8 @@ def main(argv=None):
     print(f"{paint('  🚀 PREFLIGHT', 'b', 'cyn')} {paint('· convening the crew…', 'dim')}")
 
     try:
-        result, infra_ok = build_result(diff, args.goal, cap=args.cap)
+        result, infra_ok = build_result(
+            diff, args.goal, cap=args.cap, repo_map=build_repo_map())
     except api.APIError as e:
         print(f"infrastructure failure: {e}", file=sys.stderr)
         return 2

@@ -27,3 +27,11 @@ jobs:
         with:
           modular_api_key: ${{ secrets.MODULAR_API_KEY }}
           goal: "85"
+
+      - name: Upload run artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-run-pr${{ github.event.pull_request.number }}
+          path: preflight-run.json
+          if-no-files-found: ignore
