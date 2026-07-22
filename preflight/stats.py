@@ -133,9 +133,11 @@ def append(result, diff=None, repo=None, pr=None, ts=None, ledger=None):
     rows = rows_for_run(result, diff=diff, repo=repo, pr=pr, ts=ts)
     ledger = _resolve(ledger)
     os.makedirs(os.path.dirname(ledger), exist_ok=True)
+    # One write() of all rows for this run: on POSIX an append-mode write up to
+    # PIPE_BUF is atomic, so concurrent runs interleave whole runs, not lines.
+    blob = "".join(json.dumps(row) + "\n" for row in rows)
     with open(ledger, "a") as f:
-        for row in rows:
-            f.write(json.dumps(row) + "\n")
+        f.write(blob)
     return rows
 
 
@@ -150,7 +152,10 @@ def summarize(ledger=None):
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a corrupt/half-written line shouldn't kill the report
             c = row.get("character")
             a = agg.setdefault(c, {
                 "name": row.get("name"), "emoji": row.get("emoji"),

@@ -72,6 +72,22 @@ def test_review_post_upserts_one_comment(monkeypatch):
     assert "<!-- preflight-council -->" in captured["body"]
 
 
+def test_review_does_not_post_on_infra_failure(monkeypatch):
+    """Both reviewers unparseable -> exit 2 and NO comment published."""
+    monkeypatch.setenv("MODULAR_API_KEY", "test")
+
+    def fake(model, system, user, max_tokens, node=None):
+        if system is crew.MC_SYS:
+            return ({"score": 0, "verdict": "HOLD", "summary": "x", "top_actions": []}, True)
+        return (None, False)  # reviewers fail to parse
+    monkeypatch.setattr(api, "council_call", fake)
+    captured = {}
+    _stub_gh(monkeypatch, captured)
+    rc = cli.main(["review", "5", "--repo", "o/r", "--post"])
+    assert rc == 2
+    assert captured == {}  # nothing posted for a broken review
+
+
 def test_review_no_key_is_infra(monkeypatch):
     monkeypatch.delenv("MODULAR_API_KEY", raising=False)
     rc = cli.main(["review", "5"])

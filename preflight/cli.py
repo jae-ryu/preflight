@@ -267,7 +267,7 @@ def _gh(args, stdin=None):
 
 def _repo_slug_from_url(url):
     """`https://github.com/owner/repo/pull/12` -> `owner/repo` (or None)."""
-    m = __import__("re").search(r"github\.com/([^/]+/[^/]+)/pull/", url or "")
+    m = re.search(r"github\.com/([^/]+/[^/]+)/pull/", url or "")
     return m.group(1) if m else None
 
 
@@ -275,8 +275,11 @@ def _fetch_pr(pr, repo=None):
     """Return (diff, head_sha, changed_files, repo_slug) for a PR via gh."""
     repo_args = ["--repo", repo] if repo else []
     diff = _gh(["pr", "diff", str(pr), *repo_args])
-    meta = json.loads(_gh(["pr", "view", str(pr), *repo_args,
-                           "--json", "headRefOid,files,url"]))
+    raw = _gh(["pr", "view", str(pr), *repo_args, "--json", "headRefOid,files,url"])
+    try:
+        meta = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise api.APIError(f"could not parse gh pr view output: {e}")
     head_sha = meta.get("headRefOid") or ""
     files = [f["path"] for f in (meta.get("files") or []) if f.get("path")]
     slug = repo or _repo_slug_from_url(meta.get("url", ""))
@@ -357,6 +360,13 @@ def review_command(args):
     except OSError:
         pass  # telemetry is best-effort; never fail a review over it
 
+    # Gate BEFORE publishing: never post a comment for a review that failed to
+    # parse — a bogus verdict on a real PR is worse than no verdict.
+    if not infra_ok:
+        print("infrastructure failure: both reviewers unparseable — not posting",
+              file=sys.stderr)
+        return 2
+
     body = _load_composer().compose(
         result, art_base=cfg.art_base, repo=repo, sha=head_sha, files=files)
 
@@ -371,9 +381,6 @@ def review_command(args):
         print(paint("\n  — comment preview (use --post to publish) —", "dim"))
         print(body)
 
-    if not infra_ok:
-        print("infrastructure failure: both reviewers unparseable", file=sys.stderr)
-        return 2
     return 0 if result["verdict"] == "GO" else 1
 
 
