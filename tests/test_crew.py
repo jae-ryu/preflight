@@ -73,3 +73,20 @@ def test_cross_single_deduction_in_rubric():
     r_out, m_out, merged = crew.dedupe_cross(r, m)
     score = rubric.rubric_score(r_out["findings"], m_out["findings"])
     assert score == 88  # 100 - 12 once (kept as roaster correctness), not -20
+
+
+# ---------- prompt content (iteration 3) ----------
+
+def test_severity_anchors_in_reviewer_prompts():
+    for sys in (crew.ROASTER_SYS, crew.MAMMOTH_SYS):
+        assert "SEVERITY ANCHORS" in sys
+        assert "not vibes" in sys
+        assert "shared-state corruption" in sys  # high anchor
+        assert "missing tests" in sys            # med anchor
+
+
+def test_roaster_semantic_intent_mandate():
+    s = crew.ROASTER_SYS
+    assert "MANDATORY FIRST STEP" in s
+    assert "load_config" in s
+    assert "does not match its name is a HIGH finding" in s

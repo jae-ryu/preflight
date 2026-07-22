@@ -72,25 +72,66 @@ def score_bar_line(score, goal, width=20):
 _LINE_RE = re.compile(r"^([^:\s]+):(\d+)(?:-(\d+))?$")
 
 
-def chip(where, repo=None, sha=None):
+def _resolve_file(file, files):
+    """Resolve a finding's file path against the diff's changed-file list.
+
+    Returns (resolved_path_or_None, changed: bool).
+      - files is None  -> no resolution info; link optimistically (path, False).
+      - exact match    -> (path, False).
+      - suffix match to exactly ONE changed file -> (resolved, True).
+      - ambiguous / no match -> (None, False)  => caller renders a plain chip.
+    A wrong link is worse than none.
+    """
+    if files is None:
+        return file, False
+    if file in files:
+        return file, False
+    matches = [f for f in files if f == file or f.endswith("/" + file)]
+    if len(matches) == 1:
+        return matches[0], True
+    return None, False
+
+
+def chip(where, repo=None, sha=None, files=None):
     """Render a `where` as a code chip, linked to the blob when repo+sha are known.
 
     Handles `file:line` (#Ln), `file:line-range` (#Ln-Lm), a bare `file` (no
     fragment), and `file:symbol` (links the file, keeps the full label).
+
+    When ``files`` (the diff's changed-file list) is given, the file part is
+    resolved against it: exact or unique-suffix match links (and a suffix match
+    displays the resolved path); ambiguous or unmatched paths render as a plain
+    code chip with no link.
     """
     where = str(where or "")
     if not where or not repo or not sha:
         return f"`{where}`"
+
+    def link(path, label, frag=""):
+        return f"[`{label}`](https://github.com/{repo}/blob/{sha}/{path}{frag})"
+
     m = _LINE_RE.match(where)
     if m:
         file, l1, l2 = m.group(1), m.group(2), m.group(3)
+        rfile, changed = _resolve_file(file, files)
+        if rfile is None:
+            return f"`{where}`"
         frag = f"#L{l1}" + (f"-L{l2}" if l2 else "")
-        return f"[`{where}`](https://github.com/{repo}/blob/{sha}/{file}{frag})"
+        label = where if not changed else f"{rfile}:{l1}" + (f"-{l2}" if l2 else "")
+        return link(rfile, label, frag)
     if re.match(r"^[^:\s]+$", where):  # bare file path, no line
-        return f"[`{where}`](https://github.com/{repo}/blob/{sha}/{where})"
+        rfile, changed = _resolve_file(where, files)
+        if rfile is None:
+            return f"`{where}`"
+        return link(rfile, where if not changed else rfile)
     m3 = re.match(r"^([^:\s]+):", where)  # file:symbol -> link the file part
     if m3:
-        return f"[`{where}`](https://github.com/{repo}/blob/{sha}/{m3.group(1)})"
+        file = m3.group(1)
+        rfile, changed = _resolve_file(file, files)
+        if rfile is None:
+            return f"`{where}`"
+        label = where if not changed else rfile + where[len(file):]
+        return link(rfile, label)
     return f"`{where}`"
 
 
@@ -148,7 +189,7 @@ def esc(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def gating_block(blockers, repo=None, sha=None):
+def gating_block(blockers, repo=None, sha=None, files=None):
     """Visible one-liners for blockers, each with its in-character quote under it.
 
     Shows every item when there are <= GATING_VISIBLE_MAX; only truncates beyond
@@ -158,7 +199,7 @@ def gating_block(blockers, repo=None, sha=None):
     for f in shown:
         dot = SEV_EMOJI.get(f.get("sev", "high"), "🔴")
         issue = esc(f.get("issue", ""))
-        out.append(f"{dot} {chip(f.get('where', ''), repo, sha)} — {issue}")
+        out.append(f"{dot} {chip(f.get('where', ''), repo, sha, files)} — {issue}")
         say = f.get("say")
         also = f.get("also")
         if say:
@@ -174,7 +215,7 @@ def gating_block(blockers, repo=None, sha=None):
     return out
 
 
-def nits_block(nits, repo=None, sha=None):
+def nits_block(nits, repo=None, sha=None, files=None):
     """ONE collapsed <details>, nits grouped by file in a compact table."""
     if not nits:
         return []
@@ -201,14 +242,14 @@ def nits_block(nits, repo=None, sha=None):
             sev = f.get("sev", "low")
             badge = f"{SEV_EMOJI.get(sev, '⚪')} {sev.upper()}"
             issue = esc(f.get("issue", ""))
-            out.append(f"| {badge} | {chip(f.get('where', ''), repo, sha)} | {issue} |")
+            out.append(f"| {badge} | {chip(f.get('where', ''), repo, sha, files)} | {issue} |")
         out.append("")
     out.append("</details>")
     out.append("")
     return out
 
 
-def suggestions_block(suggestions, repo=None, sha=None):
+def suggestions_block(suggestions, repo=None, sha=None, files=None):
     """Collapsed, non-blocking 💡 suggestions — framed for people who know the code."""
     if not suggestions:
         return []
@@ -219,7 +260,7 @@ def suggestions_block(suggestions, repo=None, sha=None):
     ]
     for f in suggestions:
         issue = esc(f.get("issue", ""))
-        out.append(f"- {chip(f.get('where', ''), repo, sha)} — {issue}")
+        out.append(f"- {chip(f.get('where', ''), repo, sha, files)} — {issue}")
         say = f.get("say")
         if say:
             out.append(f"  > {f['_emoji']} **{f['_reviewer']}:** {esc(say)}")
@@ -275,8 +316,58 @@ def raise_the_score(data, blockers, goal):
     return out
 
 
-def footer(meta, run_url=None):
+def _fmt_k(n):
+    """Compact token count: 940 -> `940`, 1234 -> `1.2k`."""
+    n = int(n or 0)
+    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def _fmt_time(ms):
+    """Compact duration: 820 -> `820ms`, 3400 -> `3.4s`."""
+    ms = int(ms or 0)
+    return f"{ms / 1000:.1f}s" if ms >= 1000 else f"{ms}ms"
+
+
+def _fmt_toks(usage):
+    """Tokens cell: `1.2k (+6.8k think)`; drops the think tail when zero."""
+    usage = usage or {}
+    comp = _fmt_k(usage.get("completion_tokens", 0))
+    think = usage.get("reasoning_tokens", 0)
+    return f"{comp} (+{_fmt_k(think)} think)" if think else comp
+
+
+def trace_block(trace, totals):
+    """Collapsed per-call DAG: one row per node, then a totals row."""
+    if not trace:
+        return []
+    out = [
+        "<details>",
+        "<summary>⏱ Run trace</summary>",
+        "",
+        "| Step | Model | Time | Tokens |",
+        "|:---|:---|---:|:---|",
+    ]
+    for r in trace:
+        out.append(
+            f"| `{r.get('node', '')}` | `{r.get('model', '')}` "
+            f"| {_fmt_time(r.get('duration_ms'))} | {_fmt_toks(r.get('usage'))} |"
+        )
+    totals = totals or {}
+    tok = totals.get("tokens", {}) or {}
+    total_tokens = (tok.get("prompt", 0) or 0) + (tok.get("completion", 0) or 0) \
+        + (tok.get("reasoning", 0) or 0)
+    line = (f"**{len(trace)} calls · {_fmt_time(totals.get('wall_ms'))} wall "
+            f"· {_fmt_k(total_tokens)} tokens**")
+    out.append(f"| {line} | | | |")
+    out.append("")
+    out.append("</details>")
+    out.append("")
+    return out
+
+
+def footer(meta, run_url=None, trace=None, totals=None):
     out = []
+    out += trace_block(trace, totals)
     if run_url:
         out.append(f"<sub>📦 run artifact: {run_url}</sub>")
         out.append("")
@@ -297,17 +388,22 @@ def footer(meta, run_url=None):
     return out
 
 
-def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None):
+def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None,
+            files=None):
     goal = data.get("goal", 0)
     score = data.get("score", 0)
     verdict = data.get("verdict", "HOLD")
     summary = data.get("summary", "")
     reviewers = data.get("reviewers", {})
     meta = data.get("meta", {})
+    trace = data.get("trace")
+    totals = data.get("totals")
+    if files is None:
+        files = meta.get("changed_files")
 
     base = art_base.rstrip("/")
     band, band_caption = pick_band(verdict, score, goal)
-    art_url = f"{base}/{band}.gif"
+    art_url = f"{base}/{band}.png"
 
     blockers, nits, suggestions = collect(reviewers)
 
@@ -331,7 +427,7 @@ def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None):
         out.append("")
         out.append("Nothing for the crew to gripe about. Ship it. 🚀")
         out.append("")
-        out += footer(meta, run_url)
+        out += footer(meta, run_url, trace, totals)
         return "\n".join(out) + "\n"
 
     out = [MARKER, "## 🚀 Preflight council review", ""]
@@ -351,7 +447,7 @@ def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None):
 
     # 1. Gating (visible).
     if blockers:
-        out += gating_block(blockers, repo, sha)
+        out += gating_block(blockers, repo, sha, files)
     else:
         out.append("#### ✅ No gating problems")
         out.append("")
@@ -359,10 +455,10 @@ def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None):
         out.append("")
 
     # 2. Nits (collapsed).
-    out += nits_block(nits, repo, sha)
+    out += nits_block(nits, repo, sha, files)
 
     # 3. Suggestions (non-blocking, collapsed).
-    out += suggestions_block(suggestions, repo, sha)
+    out += suggestions_block(suggestions, repo, sha, files)
 
     # 4. Raise-the-score: exact rubric deltas per gating item, else top_actions.
     if blockers:
@@ -377,7 +473,7 @@ def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None):
             out.append("")
 
     # Footer.
-    out += footer(meta, run_url)
+    out += footer(meta, run_url, trace, totals)
     return "\n".join(out) + "\n"
 
 
@@ -390,12 +486,18 @@ def main():
     ap.add_argument("--repo", default=None, help="owner/repo for file:line permalinks")
     ap.add_argument("--sha", default=None, help="head sha for file:line permalinks")
     ap.add_argument("--run-url", default=None, help="link to the workflow run artifact")
+    ap.add_argument("--files", default=None,
+                    help="comma-separated changed-file list for permalink resolution "
+                         "(defaults to meta.changed_files in the JSON)")
     args = ap.parse_args()
 
     with open(args.json_path) as f:
         data = json.load(f)
+    files = None
+    if args.files is not None:
+        files = [p for p in (s.strip() for s in args.files.split(",")) if p]
     md = compose(data, art_base=args.art_base, repo=args.repo, sha=args.sha,
-                 run_url=args.run_url)
+                 run_url=args.run_url, files=files)
 
     if args.out:
         with open(args.out, "w") as f:

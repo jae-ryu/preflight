@@ -9,7 +9,7 @@ from preflight import api, cli, crew
 def _install_council(monkeypatch, roaster, mammoth, mc, roaster_ok=True,
                      mammoth_ok=True, mc_ok=True):
     """Route council_call to canned payloads keyed by which system prompt is used."""
-    def fake(model, system, user, max_tokens):
+    def fake(model, system, user, max_tokens, node=None):
         if system is crew.ROASTER_SYS:
             return (roaster, roaster_ok)
         if system is crew.MAMMOTH_SYS:
@@ -35,13 +35,17 @@ def test_contract_shape_and_hold(monkeypatch):
     result, infra_ok = cli.build_result(DIFF, goal=85)
     # Frozen contract keys (v2).
     assert set(result) == {"version", "goal", "score", "verdict", "blockers",
-                           "nits", "summary", "top_actions", "reviewers", "meta"}
+                           "nits", "summary", "top_actions", "reviewers", "meta",
+                           "trace", "totals"}
     assert result["version"] == 2
     assert set(result["reviewers"]) == {"roaster", "mammoth"}
     for rev in result["reviewers"].values():
         assert set(rev) == {"summary", "findings", "parse_ok"}
     assert set(result["meta"]) == {"models", "diff_bytes", "truncated",
-                                   "chunks", "skipped_files"}
+                                   "chunks", "skipped_files", "changed_files"}
+    # totals present with the expected shape (trace is empty when council_call is mocked).
+    assert set(result["totals"]) == {"wall_ms", "tokens"}
+    assert set(result["totals"]["tokens"]) == {"prompt", "completion", "reasoning"}
     assert result["meta"]["models"] == {
         "reviewers": "moonshotai/Kimi-K2.6", "overseer": "google/gemma-4-31B-it"}
     assert result["meta"]["chunks"] == 1  # small diff -> single pass
@@ -120,7 +124,7 @@ def test_chunked_caps_findings_per_reviewer(monkeypatch):
     many_high = [{"sev": "high", "where": f"g{i}.py:1", "issue": "b", "say": "s"} for i in range(6)]
     many_nits = [{"sev": "med", "where": f"n{i}.py:1", "issue": "b", "say": "s"} for i in range(8)]
 
-    def fake(model, system, user, max_tokens):
+    def fake(model, system, user, max_tokens, node=None):
         if system is crew.MC_SYS:
             return ({"score": 50, "verdict": "HOLD", "summary": "x", "top_actions": []}, True)
         # Return findings whose `where` varies per chunk so nothing dedupes away.

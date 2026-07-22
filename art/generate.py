@@ -12,6 +12,10 @@ mascot cycling through 3-4 expressions/actions:
 Frames are generated one per FLUX call, resized to ~512px, and assembled into
 an animated GIF with PIL. Each GIF is kept under ~3MB.
 
+NOTE: the PR comment now embeds a single static .png frame per band (the GIFs
+read as slideshows, not motion). The .gif files are kept for future motion work;
+the committed .png beside each is the hand-picked cleanest frame.
+
 Usage:
   export MODULAR_API_KEY=$(grep -h '^MODULAR_API_KEY=' ~/modular/data-bos-warehouse/.env.local | cut -d= -f2)
   python3 art/generate.py

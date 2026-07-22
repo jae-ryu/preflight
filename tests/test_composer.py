@@ -60,6 +60,85 @@ def test_chip_plain_when_no_repo():
     assert composer.chip("server.py:12") == "`server.py:12`"
 
 
+# ---------- permalink suffix resolution (iteration 3) ----------
+
+FILES = ["smoke/widget_loader.py", "preflight/api.py"]
+
+
+def test_chip_suffix_resolves_and_shows_resolved_path():
+    c = composer.chip("widget_loader.py:5", repo="o/r", sha="sha", files=FILES)
+    assert "blob/sha/smoke/widget_loader.py#L5" in c
+    assert "`smoke/widget_loader.py:5`" in c  # resolved path shown in the chip label
+
+
+def test_chip_exact_match_links_unchanged_label():
+    c = composer.chip("preflight/api.py:10", repo="o/r", sha="sha", files=FILES)
+    assert c == "[`preflight/api.py:10`](https://github.com/o/r/blob/sha/preflight/api.py#L10)"
+
+
+def test_chip_ambiguous_suffix_no_link():
+    files = ["a/util.py", "b/util.py"]
+    c = composer.chip("util.py:3", repo="o/r", sha="sha", files=files)
+    assert c == "`util.py:3`"  # ambiguous -> plain, no link
+
+
+def test_chip_no_match_no_link():
+    c = composer.chip("ghost.py:1", repo="o/r", sha="sha", files=FILES)
+    assert c == "`ghost.py:1`"
+
+
+def test_chip_bare_file_suffix_resolves():
+    c = composer.chip("widget_loader.py", repo="o/r", sha="sha", files=FILES)
+    assert c == "[`smoke/widget_loader.py`](https://github.com/o/r/blob/sha/smoke/widget_loader.py)"
+
+
+def test_chip_symbol_suffix_resolves():
+    c = composer.chip("widget_loader.py:load_config", repo="o/r", sha="sha", files=FILES)
+    assert "blob/sha/smoke/widget_loader.py)" in c
+    assert "smoke/widget_loader.py:load_config" in c
+
+
+# ---------- run trace table ----------
+
+def _trace():
+    return [
+        {"node": "roaster-c1", "model": "kimi", "duration_ms": 3400,
+         "usage": {"prompt_tokens": 500, "completion_tokens": 1200, "reasoning_tokens": 6800},
+         "retries": 0, "parse_ok": True, "depends_on": []},
+        {"node": "mission-control", "model": "gemma", "duration_ms": 820,
+         "usage": {"prompt_tokens": 300, "completion_tokens": 90, "reasoning_tokens": 0},
+         "retries": 0, "parse_ok": True, "depends_on": ["roaster-c1"]},
+    ]
+
+
+def test_trace_block_renders():
+    totals = {"wall_ms": 4300, "tokens": {"prompt": 800, "completion": 1290, "reasoning": 6800}}
+    body = "\n".join(composer.trace_block(_trace(), totals))
+    assert "⏱ Run trace" in body
+    assert "`roaster-c1`" in body
+    assert "1.2k (+6.8k think)" in body   # completion + reasoning formatting
+    assert "90" in body                   # small completion, no think tail
+    assert "2 calls" in body
+    assert "4.3s wall" in body
+    # total tokens = 800+1290+6800 = 8890 -> 8.9k
+    assert "8.9k tokens" in body
+
+
+def test_trace_block_empty_when_absent():
+    assert composer.trace_block(None, None) == []
+    assert composer.trace_block([], {}) == []
+
+
+def test_compose_embeds_trace_and_png():
+    data = _result(roaster_findings=[_f("high", "f.py:1", "bug")])
+    data["trace"] = _trace()
+    data["totals"] = {"wall_ms": 4300, "tokens": {"prompt": 800, "completion": 1290, "reasoning": 6800}}
+    md = composer.compose(data)
+    assert "⏱ Run trace" in md
+    assert ".png" in md          # static frame embed
+    assert ".gif" not in md      # no more animated embed
+
+
 # ---------- deltas ----------
 
 def test_raise_the_score_deltas():
