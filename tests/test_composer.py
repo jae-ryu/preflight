@@ -220,3 +220,10 @@ def test_run_artifact_footer():
     data = _result(roaster_findings=[_f("high", "f.py:1", "bug")])
     md = composer.compose(data, run_url="https://github.com/o/r/actions/runs/42")
     assert "run artifact: https://github.com/o/r/actions/runs/42" in md
+
+
+def test_verdict_headline_and_glance():
+    assert composer.verdict_headline("HOLD", 44, 85) == "### 🟠 HOLD — **44/100** · goal 85 · need **+41**"
+    assert composer.verdict_headline("GO", 96, 85) == "### 🟢 GO — **96/100** · goal 85"
+    g = composer.at_a_glance([1, 2], [1], [])
+    assert "2** blocker" in g and "1** nit" in g and "suggestion" not in g
