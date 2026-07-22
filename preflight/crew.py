@@ -191,6 +191,13 @@ ROASTER_SYS = (
     "does not match its name is a HIGH finding even if the code has no crash "
     "(example: a load_config that returns a list of key names instead of the "
     "config). Report it as sev high with where=<file>:<def line>. "
+    "FAILURE-PATH FIDELITY — for any instrumentation, wrapper, context manager, "
+    "try/finally, or error handler (telemetry, logging, spans, dispatch loops), "
+    "trace what happens when the wrapped work RAISES, not just when it succeeds: "
+    "does the recorded status/span/log/return reflect the failure honestly, or "
+    "does it silently close as success, crash the caller, or let a finally-block "
+    "mask the original error? Instrumentation that lies on the error path is a "
+    "HIGH finding (example: a span left status=OK when its handler threw). "
     "Never report the same root cause twice — pick the sharpest framing. "
     + REVIEWER_FMT
 )
