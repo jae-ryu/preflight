@@ -117,12 +117,16 @@ def is_cycle(change, history):
     if cid is None:
         return {"cycle": False, "reason": "change is not a dict"}
     target, before, after = cid
+    # A change with no target is under-specified; matching it against other
+    # under-specified changes on (None, None, None) would fire a false cycle.
+    if target is None:
+        return {"cycle": False, "reason": "change has no target to match on"}
     for prior in history or []:
         pid = _change_id(prior)
         if pid is None:
             continue
         p_target, p_before, p_after = pid
-        if p_target != target:
+        if p_target is None or p_target != target:
             continue
         # exact repeat of an applied change, or a straight revert of one.
         if (p_before, p_after) == (before, after):

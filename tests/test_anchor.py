@@ -29,6 +29,12 @@ def test_extract_findings_non_list_findings_does_not_crash():
     assert anchor.extract_findings(run) == ([], [])
 
 
+def test_extract_findings_non_dict_reviewer_body_does_not_crash():
+    # council-caught round 2: a list-shaped reviewer body would AttributeError on .get.
+    run = {"reviewers": {"roaster": ["oops"], "mammoth": "nope"}}
+    assert anchor.extract_findings(run) == ([], [])
+
+
 def test_score_run_default_rubric():
     # one roaster high (-12) => 88 under v1 rubric.
     run = _run(roaster=[{"sev": "high"}])

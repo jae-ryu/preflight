@@ -73,9 +73,13 @@ def extract_findings(run):
     reviewers = (run or {}).get("reviewers") or {}
 
     def _f(key):
-        raw = (reviewers.get(key) or {}).get("findings")
-        # `findings` may be a non-list (int/bool/str) from malformed output;
-        # only iterate a real list, else treat as no findings.
+        body = reviewers.get(key)
+        # The reviewer body itself may be a non-dict (a list, str, …) from
+        # malformed output; .get on it would raise, so bail to empty.
+        if not isinstance(body, dict):
+            return []
+        raw = body.get("findings")
+        # `findings` may be a non-list (int/bool/str); only iterate a real list.
         if not isinstance(raw, list):
             return []
         return [f for f in raw if isinstance(f, dict)]

@@ -88,6 +88,14 @@ def test_cycle_tolerates_malformed():
     assert d["cycle"] is False
 
 
+def test_cycle_no_false_positive_on_targetless_changes():
+    # council-caught round 2: two changes missing keys both id as (None,None,None)
+    # and must NOT be treated as a repeat/revert of each other.
+    change = {"before": 1, "after": 2}  # no target
+    history = [{"note": "also targetless"}]
+    assert lg.is_cycle(change, history)["cycle"] is False
+
+
 # ---- graduation gate ---------------------------------------------------------
 
 
