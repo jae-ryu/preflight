@@ -70,6 +70,8 @@ def _trace_for(trace, prefix):
 
 def _reviewer_row(findings):
     """Findings-derived stats for a reviewer: counts, avg issue length, harshness."""
+    # Guard against malformed LLM output (non-dict items), like grader_breakdown.
+    findings = [f for f in (findings or []) if isinstance(f, dict)]
     n = len(findings)
     blockers = sum(
         1 for f in findings if f.get("tier") == "blocker" or f.get("sev") == "high"
