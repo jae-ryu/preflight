@@ -23,7 +23,11 @@ unchanged — this layer is additive diagnostics, reported alongside it.
 # Ordered lane vocabularies. Order is the display order in the report.
 LANES = {
     "roaster": ["correctness", "failure-path", "security", "resilience"],
-    "mammoth": ["repo-fit", "tests", "docs", "maintainability"],
+    # `design` (R3): is this the right approach / place / abstraction — distinct
+    # from `repo-fit` (does it match existing patterns). Emitted as non-gating
+    # evidence-cited questions; LLMs are weakest at architecture, so it never
+    # auto-blocks. See tune-up report R3.
+    "mammoth": ["repo-fit", "design", "tests", "docs", "maintainability"],
 }
 
 # Fallback: derive a dimension from a finding's failure-class tag when the
@@ -48,6 +52,8 @@ TAG_DIM = {
     "build-artifact": "repo-fit",
     "duplication": "repo-fit",
     "dead-code": "repo-fit",
+    "wrong-abstraction": "design",
+    "over-engineered": "design",
     "missing-tests": "tests",
     "unverified-claim": "tests",
 }
@@ -58,19 +64,26 @@ TAG_DIM = {
 DEDUCT = {"high": 30, "med": 10, "low": 4}
 
 
+def _str(v):
+    """Coerce a possibly-non-string field to a clean lower string. Never raises:
+    the model can emit an int/None/list for dim/tag/sev and we must not crash."""
+    return v.strip().lower() if isinstance(v, str) else ""
+
+
 def _sev(f):
-    return (f.get("sev") or "").lower()
+    return _str(f.get("sev"))
 
 
 def resolve_dim(finding, grader):
-    """Return the lane dimension a finding belongs to (never raises)."""
+    """Return the lane dimension a finding belongs to (never raises, even on
+    non-string dim/tag from malformed model output)."""
     lane = LANES.get(grader, [])
     if not lane:
         return None
-    dim = (finding.get("dim") or "").strip().lower()
+    dim = _str(finding.get("dim"))
     if dim in lane:
         return dim
-    mapped = TAG_DIM.get((finding.get("tag") or "").strip().lower())
+    mapped = TAG_DIM.get(_str(finding.get("tag")))
     if mapped in lane:
         return mapped
     return lane[0]
@@ -87,7 +100,10 @@ def stamp_dims(findings, grader):
 def _dim_score(findings):
     score = 100
     for f in findings:
-        score -= DEDUCT.get(_sev(f), 0)
+        # An unknown/missing severity must NOT silently deduct 0 (that inflates
+        # the dimension score — flagged on PR #7 run). A finding that reached
+        # here is real; default it to the med deduction rather than a free pass.
+        score -= DEDUCT.get(_sev(f), DEDUCT["med"])
     return max(0, score)
 
 

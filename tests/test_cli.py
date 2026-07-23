@@ -34,9 +34,9 @@ def test_contract_shape_and_hold(monkeypatch):
     result, infra_ok = cli.build_result(DIFF, goal=85)
     # Frozen contract keys (v3 — adds the per-grader/per-dimension breakout).
     assert set(result) == {"version", "goal", "score", "verdict", "blockers",
-                           "nits", "rubric_score", "model_score", "grader_scores",
-                           "dimension_scores", "summary", "top_actions",
-                           "reviewers", "meta", "trace", "totals"}
+                           "nits", "rubric_score", "model_score", "rubric_version",
+                           "grader_scores", "dimension_scores", "summary",
+                           "top_actions", "reviewers", "meta", "trace", "totals"}
     assert result["version"] == 3
     # Breakout shape: three graders, each lane's dimensions present.
     assert set(result["grader_scores"]) == {"roaster", "mammoth", "mission_control"}

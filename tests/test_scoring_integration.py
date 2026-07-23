@@ -158,6 +158,48 @@ def test_grader_breakdown_survives_non_dict_findings():
     assert 0 <= grader <= 100
 
 
+def test_resolve_dim_never_raises_on_non_string(monkeypatch):
+    """R-fix: a non-string dim/tag (int, list) must not crash resolve_dim."""
+    assert dimensions.resolve_dim({"dim": 42}, "roaster") == "correctness"
+    assert dimensions.resolve_dim({"tag": ["x"]}, "roaster") == "correctness"
+    assert dimensions.resolve_dim({"dim": None, "tag": None}, "mammoth") == "repo-fit"
+
+
+def test_unknown_severity_does_not_inflate_dimension():
+    """R-fix: an unknown/missing severity must deduct (not silently score 0)."""
+    findings = [{"dim": "correctness", "sev": "typo-not-a-sev"}]
+    dims, _ = dimensions.grader_breakdown(findings, "roaster")
+    assert dims["correctness"] == 100 - dimensions.DEDUCT["med"]  # not 100
+
+
+def test_mammoth_has_design_dimension():
+    """R3: design is now a distinct Mammoth lane dimension."""
+    assert "design" in dimensions.LANES["mammoth"]
+    assert dimensions.resolve_dim({"tag": "wrong-abstraction"}, "mammoth") == "design"
+
+
+def test_rubric_version_stamped_on_finalize():
+    """Every finalized score records the rubric_version that produced it."""
+    final = rubric.finalize(90, "GO", [], [], goal=85)
+    assert final["rubric_version"] == rubric.RUBRIC_VERSION
+
+
+def test_overseer_gets_loc_for_size_gate(monkeypatch):
+    """R2: the changed-line count is fed into Mission Control's prompt."""
+    from preflight import api, crew
+
+    seen = {}
+
+    def fake(model, system, user, max_tokens, node=None):
+        if node == "mission-control":
+            seen["user"] = user
+        return ({"score": 90, "verdict": "GO", "summary": "x", "top_actions": []}, True)
+
+    monkeypatch.setattr(api, "council_call", fake)
+    crew.run_overseer(85, {"findings": []}, {"findings": []}, loc=1234)
+    assert "1234" in seen["user"]
+
+
 def test_breakout_does_not_change_the_gate_score():
     """Adding the dimension layer must not perturb the deterministic aggregate."""
     roaster = [_find("high", dim="security"), _find("med", dim="correctness")]

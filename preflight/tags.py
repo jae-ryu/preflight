@@ -156,6 +156,20 @@ _SEED = [
         "inviting edits that do nothing.",
         "low",
     ),
+    Tag(
+        "wrong-abstraction",
+        "Wrong abstraction",
+        "The change solves the problem in the wrong place or shape; a "
+        "simpler or better-located design would age far better.",
+        "med",
+    ),
+    Tag(
+        "over-engineered",
+        "Over-engineered",
+        "The change adds structure the problem does not warrant, paying "
+        "complexity now for flexibility that may never be needed.",
+        "low",
+    ),
 ]
 
 TAGS: "OrderedDict[str, Tag]" = OrderedDict((t.id, t) for t in _SEED)
