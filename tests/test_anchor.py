@@ -23,6 +23,12 @@ def test_extract_findings_missing_reviewers():
     assert anchor.extract_findings(None) == ([], [])
 
 
+def test_extract_findings_non_list_findings_does_not_crash():
+    # council-caught: findings as int/bool/str must not explode the comprehension.
+    run = {"reviewers": {"roaster": {"findings": 5}, "mammoth": {"findings": "x"}}}
+    assert anchor.extract_findings(run) == ([], [])
+
+
 def test_score_run_default_rubric():
     # one roaster high (-12) => 88 under v1 rubric.
     run = _run(roaster=[{"sev": "high"}])
@@ -106,6 +112,13 @@ def test_load_anchor_set_skips_non_dict_json(tmp_path):
     runs, errors = anchor.load_anchor_set_x([str(bad)], base_dir=str(tmp_path))
     assert runs == []
     assert errors == [str(bad)]
+
+
+def test_load_anchor_set_tolerates_non_string_entry(tmp_path):
+    # council-caught: a non-string manifest entry must be recorded, not crash.
+    runs, errors = anchor.load_anchor_set_x([123, None], base_dir=str(tmp_path))
+    assert runs == []
+    assert errors == [123, None]
 
 
 def test_load_anchor_set_empty_manifest():

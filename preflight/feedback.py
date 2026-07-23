@@ -150,7 +150,10 @@ def join(feedback, ledger_rows=None):
 
 
 def _outcome(rec):
-    return (rec.get("outcome") or "").strip().lower()
+    # `outcome` may arrive as a bool/int/None from hand-written or corrupt
+    # feedback; coerce non-strings to "" rather than crash on .strip().
+    o = rec.get("outcome")
+    return o.strip().lower() if isinstance(o, str) else ""
 
 
 def signal_ratio(ledger):

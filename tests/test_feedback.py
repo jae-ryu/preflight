@@ -50,6 +50,20 @@ def test_signal_ratio_ignores_non_dict_and_bad_outcome():
     assert feedback.signal_ratio(ledger) == 1.0
 
 
+def test_signal_ratio_tolerates_non_string_outcome():
+    # bool/int/None outcome must not crash (council-caught: _outcome AttributeError).
+    ledger = [
+        _finding("a.py:1", "acted-on"),
+        {"kind": "finding", "outcome": True},
+        {"kind": "finding", "outcome": 3},
+        {"kind": "finding", "outcome": None},
+    ]
+    assert feedback.signal_ratio(ledger) == 1.0
+    # the same non-strings survive the rollup path too.
+    rates = feedback.acted_on_rates(ledger, by="dim")
+    assert rates["(none)"]["unknown"] == 3
+
+
 def test_signal_ratio_is_rubric_invariant():
     # No score field anywhere; ratio depends only on outcomes.
     ledger = [_finding("a.py:1", "acted-on", score=99),

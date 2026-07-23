@@ -47,11 +47,14 @@ def load_anchor_set_x(manifest, base_dir=None):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     runs, errors = [], []
     for path in manifest or []:
-        full = path if os.path.isabs(path) else os.path.join(base_dir, path)
+        # A non-string manifest entry (os.path.join TypeError) or a file that
+        # is not valid UTF-8 (UnicodeDecodeError) must not crash the loader —
+        # record it as a bad entry, same as a missing/corrupt file.
         try:
+            full = path if os.path.isabs(path) else os.path.join(base_dir, path)
             with open(full) as f:
                 run = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, TypeError, UnicodeDecodeError):
             errors.append(path)
             continue
         if isinstance(run, dict):
@@ -70,7 +73,11 @@ def extract_findings(run):
     reviewers = (run or {}).get("reviewers") or {}
 
     def _f(key):
-        raw = (reviewers.get(key) or {}).get("findings") or []
+        raw = (reviewers.get(key) or {}).get("findings")
+        # `findings` may be a non-list (int/bool/str) from malformed output;
+        # only iterate a real list, else treat as no findings.
+        if not isinstance(raw, list):
+            return []
         return [f for f in raw if isinstance(f, dict)]
 
     return _f("roaster"), _f("mammoth")
