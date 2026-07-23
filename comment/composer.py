@@ -2,26 +2,28 @@
 """
 composer.py — turn a Preflight council JSON result into a PR comment.
 
-Comment v3: a sober, information-dense scorecard. No mascots, no hype,
-minimal emphasis. Layout:
+Comment v4: a senior-engineer review. Optimized for a 5-second skim, then
+progressive detail. Layout, top to bottom:
 
   marker
   ## Preflight review
-  one-line verdict:  **HOLD** · 45/100 (goal 85, +40 to clear)
-  one-line summary + at-a-glance counts
-  Blockers, grouped by failure-class tag (preflight/tags.py), each group
-    headed by the tag's one-line impact statement. Reviewer quotes are
-    kept but secondary.
-  Nits: one collapsed <details>, grouped by file.
-  Suggestions: collapsed <details>, non-blocking.
-  To clear: checklist with exact rubric deltas per gating fix.
-  Run trace: collapsed <details>. Plain footer (models, tokens, run link).
+  one-line verdict:  🔴 **HOLD** · 33/100 (goal 85) · 3 blockers · 4 nits
+  Score breakout table — WHO graded, each grader's dimension sub-scores, so
+    the weak axis is obvious at a glance. Mission Control is the gate score.
+  Blockers as PR-style suggested changes — each renders like a GitHub review
+    comment: file:line + failure-class label + one-line issue, then the
+    offending snippet as a code block and a ```suggestion (or a "Change:"
+    fenced block) with the fix. Degrades to issue+where+tag when no
+    snippet/suggestion is carried.
+  Nits: one collapsed <details>, grouped by file. Suggestions render 💡.
+  Footer: models used + run artifact link, run trace collapsed.
 
-Accepts BOTH contract v1 (no per-finding "tier") and v2. When a finding
-has no "tier", the composer derives it deterministically: high-sev =
-blocker, med/low = nit. A finding may carry a failure-class via "tag";
-absent or unknown tags degrade to a heuristic keyword match, then to the
-"other" bucket — never a crash.
+Contract: findings carry sev, tier, dim, optional tag/say/also/kind, plus
+OPTIONAL passthrough `snippet` (offending code) and `suggestion` (the fix;
+render as ```suggestion, or a "Change:" fenced block when the finding sets
+suggestion_kind == "change"). The score table reads result["grader_scores"]
+and result["dimension_scores"] (contract v3); when absent it is computed
+from the findings so the table always renders.
 
 Usage:
   python3 comment/composer.py comment/fixtures/pr-92708.json > out.md
@@ -33,15 +35,13 @@ import os
 import re
 import sys
 
-sys.path.insert(
-    0, os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-)
-from preflight import rubric, tags  # noqa: E402
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from preflight import dimensions, tags  # noqa: E402
 
 MARKER = "<!-- preflight-council -->"
 
 # Kept for CLI compatibility (the action passes --art-base); no longer
-# used — comment v3 embeds no reaction art.
+# used — comment v4 embeds no reaction art.
 DEFAULT_ART_BASE = (
     "https://raw.githubusercontent.com/jae-ryu/preflight/main/art/reactions/"
 )
@@ -49,6 +49,53 @@ DEFAULT_ART_BASE = (
 SEV_RANK = {"high": 0, "med": 1, "low": 2}
 
 REVIEWERS = (("Roaster", "roaster"), ("Mammoth", "mammoth"))
+
+# Score-table presentation: grader glyphs + display names, and the label a
+# reader sees for each lane dimension.
+GRADER_GLYPH = {"roaster": "🔥", "mammoth": "🦣", "mission_control": "🧑‍🚀"}
+GRADER_NAME = {
+    "roaster": "Roaster",
+    "mammoth": "Mammoth",
+    "mission_control": "Mission Control",
+}
+
+# A sub-score at or below this is a "work here" axis — rendered bold.
+WEAK_DIM = 50
+
+# Fenced-code language by file extension, for offending-code snippets.
+EXT_LANG = {
+    ".py": "python",
+    ".pyi": "python",
+    ".ts": "ts",
+    ".tsx": "tsx",
+    ".js": "js",
+    ".jsx": "jsx",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".rb": "ruby",
+    ".php": "php",
+    ".c": "c",
+    ".h": "c",
+    ".cc": "cpp",
+    ".cpp": "cpp",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".swift": "swift",
+    ".scala": "scala",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".json": "json",
+    ".toml": "toml",
+    ".sql": "sql",
+    ".html": "html",
+    ".css": "css",
+    ".mojo": "mojo",
+}
 
 # Conservative keyword fallback for findings that arrive without a "tag".
 # First match wins; anything unmatched buckets under tags.OTHER_ID.
@@ -62,22 +109,6 @@ _TAG_KEYWORDS = (
     ("concurrency", ("race", "thread-safe", "not thread")),
     ("info-leak", ("secret", "credential", "api key")),
 )
-
-
-def score_bar_line(score, goal, width=20):
-    """A 20-cell bar with a `|` goal marker and a `(need +N)` tail.
-
-    e.g. `████████░░░░░░░░░|░░`  45/100 · goal 85 (need +40)
-    """
-    filled = max(0, min(width, round(score / 100 * width)))
-    cells = ["█"] * filled + ["░"] * (width - filled)
-    gpos = max(0, min(width, round(goal / 100 * width)))
-    cells.insert(gpos, "|")  # visual goal marker
-    bar = "".join(cells)
-    line = f"`{bar}`  {score}/100 · goal {goal}"
-    if score < goal:
-        line += f" (need +{goal - score})"
-    return line
 
 
 _LINE_RE = re.compile(r"^([^:\s]+):(\d+)(?:-(\d+))?$")
@@ -128,9 +159,7 @@ def chip(where, repo=None, sha=None, files=None):
         if rfile is None:
             return f"`{where}`"
         frag = f"#L{l1}" + (f"-L{l2}" if l2 else "")
-        label = (
-            where if not changed else f"{rfile}:{l1}" + (f"-{l2}" if l2 else "")
-        )
+        label = where if not changed else f"{rfile}:{l1}" + (f"-{l2}" if l2 else "")
         return link(rfile, label, frag)
     if re.match(r"^[^:\s]+$", where):  # bare file path, no line
         rfile, changed = _resolve_file(where, files)
@@ -148,16 +177,25 @@ def chip(where, repo=None, sha=None, files=None):
     return f"`{where}`"
 
 
-def verdict_headline(verdict, score, goal):
-    """One line, one small marker: `🔴 **HOLD** · 45/100 (goal 85, ...)`."""
-    if verdict == "GO":
-        return f"🟢 **GO** · {score}/100 (goal {goal})"
-    tail = f", +{goal - score} to clear" if score < goal else ""
-    return f"🔴 **HOLD** · {score}/100 (goal {goal}{tail})"
+def verdict_headline(verdict, score, goal, blockers=None, nits=None):
+    """One skimmable line: dot + verdict + score/goal + counts.
+
+    `🔴 **HOLD** · 33/100 (goal 85) · 3 blockers · 4 nits`
+    """
+    dot = "🟢" if verdict == "GO" else "🔴"
+    line = f"{dot} **{verdict}** · {score}/100 (goal {goal})"
+    counts = []
+    if blockers is not None:
+        counts.append(f"{blockers} blocker{'s' if blockers != 1 else ''}")
+    if nits is not None:
+        counts.append(f"{nits} nit{'s' if nits != 1 else ''}")
+    if counts:
+        line += " · " + " · ".join(counts)
+    return line
 
 
 def derive_tier(finding):
-    """Contract v2 has an explicit tier; v1 does not — derive it.
+    """Contract v2+ has an explicit tier; v1 does not — derive it.
 
     blocker = any high-sev finding; nit = med/low.
     """
@@ -181,6 +219,12 @@ def derive_tag(finding):
         if any(w in text for w in words):
             return tag_id
     return tags.OTHER_ID
+
+
+def tag_label(finding):
+    """Human label for a finding's failure class (`Logic error`, `Other`)."""
+    tag = tags.get(derive_tag(finding))
+    return tag.label if tag else "Other"
 
 
 def collect(reviewers):
@@ -207,68 +251,140 @@ def collect(reviewers):
     return blockers, nits, suggestions
 
 
-def at_a_glance(blockers, nits, suggestions):
-    """One quiet counts line: `4 blockers · 5 nits · 1 suggestion`."""
-
-    def n(count, word):
-        return f"{count} {word}{'s' if count != 1 else ''}"
-
-    parts = [n(len(blockers), "blocker"), n(len(nits), "nit")]
-    if suggestions:
-        parts.append(n(len(suggestions), "suggestion"))
-    return " · ".join(parts)
-
-
 def esc(text):
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def _finding_lines(f, repo, sha, files):
-    """One finding: sev · location — issue, then fix + quote sub-lines."""
+# ---------- score breakout table ----------
+
+
+def _score_data(data):
+    """Grader + dimension scores, from the contract or computed on the fly.
+
+    Contract v3 carries `grader_scores` / `dimension_scores`; older results
+    do not, so we fall back to computing them from the findings. Mission
+    Control's grader score is always the finalized gate score.
+    """
+    grader = dict(data.get("grader_scores") or {})
+    dims = dict(data.get("dimension_scores") or {})
+    if not grader or not dims:
+        reviewers = data.get("reviewers", {})
+        r = reviewers.get("roaster", {}).get("findings", [])
+        m = reviewers.get("mammoth", {}).get("findings", [])
+        diag = dimensions.breakdown(r, m)
+        grader = diag["grader_scores"]
+        dims = diag["dimension_scores"]
+    grader = dict(grader)
+    grader["mission_control"] = data.get("score", 0)
+    return grader, dims
+
+
+def _dim_cell(dims):
+    """`correctness **0** · failure-path 100 · …`, weak axes bolded."""
+    parts = []
+    for name, val in dims.items():
+        label = name.replace("_", "-")
+        parts.append(f"{label} **{val}**" if val <= WEAK_DIM else f"{label} {val}")
+    return " · ".join(parts)
+
+
+def score_table(data):
+    """Markdown table: WHO graded, their score, and per-dimension sub-scores.
+
+    Roaster / Mammoth rows show the lane breakout; the Mission Control row
+    is the gate score and carries the verdict arrow.
+    """
+    grader, dims = _score_data(data)
+    verdict = data.get("verdict", "HOLD")
+    out = [
+        "| Grader | Score | Dimensions |",
+        "|:--|:--:|:--|",
+    ]
+    for key in ("roaster", "mammoth"):
+        glyph = GRADER_GLYPH[key]
+        name = GRADER_NAME[key]
+        sc = grader.get(key, 0)
+        cell = _dim_cell(dims.get(key, {}))
+        out.append(f"| {glyph} {name} | {sc} | {cell} |")
+    mc = grader.get("mission_control", data.get("score", 0))
+    out.append(
+        f"| {GRADER_GLYPH['mission_control']} "
+        f"{GRADER_NAME['mission_control']} | **{mc}** | → **{verdict}** |"
+    )
+    out.append("")
+    return out
+
+
+# ---------- blockers as suggested changes ----------
+
+
+def _lang_for(where):
+    """Fenced-code language for a `where` path, or "" if unknown."""
+    path = str(where or "").split(":")[0]
+    _, ext = os.path.splitext(path)
+    return EXT_LANG.get(ext.lower(), "")
+
+
+def _blocker_block(f, repo, sha, files):
+    """One blocker, rendered like a GitHub review comment.
+
+    Header (file:line · failure class) + one-line issue, then the offending
+    snippet and a suggested change when the finding carries them. Degrades
+    to header + issue when snippet/suggestion are absent.
+    """
     out = []
-    sev = f.get("sev", "med")
     loc = chip(f.get("where", ""), repo, sha, files)
-    out.append(f"- {sev} · {loc} — {esc(f.get('issue', ''))}")
-    fix = f.get("fix")
-    if fix:
-        out.append(f"  <br>Fix: {esc(fix)}")
+    out.append(f"{loc} · **{tag_label(f)}**")
+    out.append("")
+    out.append(esc(f.get("issue", "")))
+    out.append("")
+
+    lang = _lang_for(f.get("where", ""))
+    snippet = f.get("snippet")
+    if snippet:
+        out.append(f"```{lang}".rstrip())
+        out += str(snippet).rstrip("\n").split("\n")
+        out.append("```")
+    suggestion = f.get("suggestion")
+    if suggestion:
+        # A contiguous replacement -> GitHub ```suggestion. A non-contiguous
+        # or multi-hunk fix -> a plain "Change:" fenced block.
+        if f.get("suggestion_kind") == "change":
+            out.append("Change:")
+            out.append(f"```{lang}".rstrip())
+        else:
+            out.append("```suggestion")
+        out += str(suggestion).rstrip("\n").split("\n")
+        out.append("```")
+    elif not snippet:
+        # No code to show — fall back to the prose fix, if any.
+        fix = f.get("fix")
+        if fix:
+            out.append(f"Fix: {esc(fix)}")
+
     say = f.get("say")
     if say:
-        out.append(f"  <br><sub>{f.get('_reviewer', '')}: {esc(say)}</sub>")
+        out.append(f"<sub>{f.get('_reviewer', '')}: {esc(say)}</sub>")
     also = f.get("also")
     if also:
-        out.append(
-            f"  <br><sub>Mammoth (also flagged): "
-            f"{esc(also.get('say', ''))}</sub>"
-        )
+        out.append(f"<sub>Mammoth also flagged: {esc(also.get('say', ''))}</sub>")
+    out.append("")
     return out
 
 
 def gating_block(blockers, repo=None, sha=None, files=None):
-    """Blockers grouped by failure-class tag, each group headed by the
-    tag label and its one-line impact statement."""
+    """All blockers, each as its own suggested-change block."""
     out = [f"### Blockers ({len(blockers)})", ""]
-    groups = {}
-    order = []
     for f in blockers:
-        tid = derive_tag(f)
-        if tid not in groups:
-            groups[tid] = []
-            order.append(tid)
-        groups[tid].append(f)
-    for tid in order:
-        tag = tags.get(tid)
-        label = tag.label if tag else "Other"
-        out.append(f"**{label}** — {tags.why(tid)}")
-        out.append("")
-        for f in groups[tid]:
-            out += _finding_lines(f, repo, sha, files)
-        out.append("")
+        out += _blocker_block(f, repo, sha, files)
     return out
 
 
+# ---------- nits + suggestions ----------
+
+
 def nits_block(nits, repo=None, sha=None, files=None):
-    """ONE collapsed <details>, nits grouped by file in a compact table."""
+    """ONE collapsed <details>, nits grouped by file, one line each."""
     if not nits:
         return []
 
@@ -282,14 +398,11 @@ def nits_block(nits, repo=None, sha=None, files=None):
 
     out = [
         "<details>",
-        f"<summary>Nits ({len(nits)}) — grouped by file</summary>",
+        f"<summary>Nits ({len(nits)})</summary>",
         "",
     ]
     for file in sorted(groups):
         out.append(f"`{file}`")
-        out.append("")
-        out.append("| Sev | Where | Note |")
-        out.append("|:---|:---|:---|")
         rows = sorted(
             groups[file],
             key=lambda x: SEV_RANK.get(x.get("sev", "low"), 3),
@@ -297,7 +410,7 @@ def nits_block(nits, repo=None, sha=None, files=None):
         for f in rows:
             sev = f.get("sev", "low")
             loc = chip(f.get("where", ""), repo, sha, files)
-            out.append(f"| {sev} | {loc} | {esc(f.get('issue', ''))} |")
+            out.append(f"- {sev} · {loc} — {esc(f.get('issue', ''))}")
         out.append("")
     out.append("</details>")
     out.append("")
@@ -305,7 +418,7 @@ def nits_block(nits, repo=None, sha=None, files=None):
 
 
 def suggestions_block(suggestions, repo=None, sha=None, files=None):
-    """Collapsed, non-blocking suggestions."""
+    """Collapsed, non-blocking suggestions, each marked 💡."""
     if not suggestions:
         return []
     out = [
@@ -315,7 +428,7 @@ def suggestions_block(suggestions, repo=None, sha=None, files=None):
     ]
     for f in suggestions:
         loc = chip(f.get("where", ""), repo, sha, files)
-        out.append(f"- {loc} — {esc(f.get('issue', ''))}")
+        out.append(f"- 💡 {loc} — {esc(f.get('issue', ''))}")
         say = f.get("say")
         if say:
             out.append(f"  <br><sub>{f.get('_reviewer', '')}: {esc(say)}</sub>")
@@ -325,54 +438,7 @@ def suggestions_block(suggestions, repo=None, sha=None, files=None):
     return out
 
 
-def _without(findings, target):
-    """Return findings minus the first one matching target by where+issue."""
-    out, removed = [], False
-    for x in findings:
-        if (
-            not removed
-            and x.get("where") == target.get("where")
-            and x.get("issue") == target.get("issue")
-        ):
-            removed = True
-            continue
-        out.append(x)
-    return out
-
-
-def raise_the_score(data, blockers, goal):
-    """Checklist of gating fixes with the exact rubric delta each recovers.
-
-    `- [ ] Fix X (+12 → 51/100)`. Closes with one honest line when
-    clearing all gating still lands below goal.
-    """
-    reviewers = data.get("reviewers", {})
-    r = reviewers.get("roaster", {}).get("findings", [])
-    m = reviewers.get("mammoth", {}).get("findings", [])
-    current = rubric.rubric_score(r, m)
-
-    out = ["### To clear", ""]
-    for f in blockers:
-        if f.get("_reviewer") == "Roaster":
-            new = rubric.rubric_score(_without(r, f), m)
-        else:
-            new = rubric.rubric_score(r, _without(m, f))
-        delta = new - current
-        issue = esc(f.get("issue", "") or f.get("where", ""))
-        out.append(f"- [ ] {issue} (+{delta} → {new}/100)")
-    out.append("")
-
-    # Honest line: what does clearing ALL gating actually land us at?
-    r_rest = [x for x in r if x.get("sev") != "high"]
-    m_rest = [x for x in m if x.get("sev") != "high"]
-    cleared = rubric.rubric_score(r_rest, m_rest)
-    if cleared < goal:
-        out.append(
-            f"Clearing all gating lands ~{cleared}/100 — the nits are "
-            f"the rest of the way to {goal}."
-        )
-        out.append("")
-    return out
+# ---------- run trace + footer ----------
 
 
 def _fmt_k(n):
@@ -470,7 +536,7 @@ def compose(
     run_url=None,
     files=None,
 ):
-    del art_base  # comment v3 embeds no reaction art
+    del art_base  # comment v4 embeds no reaction art
     goal = data.get("goal", 0)
     score = data.get("score", 0)
     verdict = data.get("verdict", "HOLD")
@@ -488,7 +554,7 @@ def compose(
         MARKER,
         "## Preflight review",
         "",
-        verdict_headline(verdict, score, goal),
+        verdict_headline(verdict, score, goal, len(blockers), len(nits)),
         "",
     ]
 
@@ -499,11 +565,11 @@ def compose(
         out += footer(meta, run_url, trace, totals)
         return "\n".join(out) + "\n"
 
+    out += score_table(data)
+
     if summary:
         out.append(esc(summary))
         out.append("")
-    out.append(f"<sub>{at_a_glance(blockers, nits, suggestions)}</sub>")
-    out.append("")
 
     if blockers:
         out += gating_block(blockers, repo, sha, files)
@@ -513,17 +579,6 @@ def compose(
 
     out += nits_block(nits, repo, sha, files)
     out += suggestions_block(suggestions, repo, sha, files)
-
-    if blockers:
-        out += raise_the_score(data, blockers, goal)
-    else:
-        actions = data.get("top_actions", [])
-        if actions:
-            out.append("### To clear")
-            out.append("")
-            for a in actions[:3]:
-                out.append(f"- [ ] {a}")
-            out.append("")
 
     out += footer(meta, run_url, trace, totals)
     return "\n".join(out) + "\n"
@@ -538,15 +593,9 @@ def main():
         help="deprecated; accepted for compatibility, ignored",
     )
     ap.add_argument("-o", "--out", help="write markdown to this file")
-    ap.add_argument(
-        "--repo", default=None, help="owner/repo for file:line permalinks"
-    )
-    ap.add_argument(
-        "--sha", default=None, help="head sha for file:line permalinks"
-    )
-    ap.add_argument(
-        "--run-url", default=None, help="link to the workflow run artifact"
-    )
+    ap.add_argument("--repo", default=None, help="owner/repo for file:line permalinks")
+    ap.add_argument("--sha", default=None, help="head sha for file:line permalinks")
+    ap.add_argument("--run-url", default=None, help="link to the workflow run artifact")
     ap.add_argument(
         "--files",
         default=None,

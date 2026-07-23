@@ -1,7 +1,6 @@
 """End-to-end contract assembly + exit codes. API fully mocked at council_call."""
 import json
 
-import pytest
 
 from preflight import api, cli, crew, dimensions
 

@@ -9,13 +9,17 @@ tokens (incl. reasoning) they burn.
 
 The ledger is append-only JSONL (one row per character per run) so it stays
 trivially greppable and warehouse-ingestable (see FIN-711 / FIN-629). Nothing
-here calls the network — it reads a finished run@2 result dict.
+here calls the network — it reads a finished run@3 result dict.
 """
+
 import json
 import os
 
 DEFAULT_LEDGER = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "runs", "reviewer-stats.jsonl")
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "runs",
+    "reviewer-stats.jsonl",
+)
 
 
 def _resolve(ledger):
@@ -25,6 +29,7 @@ def _resolve(ledger):
     somewhere other than the repo's real runs/ file.
     """
     return ledger or os.environ.get("PREFLIGHT_STATS_LEDGER") or DEFAULT_LEDGER
+
 
 # Severity weights used only as a *harshness* proxy (not the scoring rubric).
 _SEV_W = {"high": 3, "med": 1, "low": 0.5}
@@ -66,25 +71,41 @@ def _trace_for(trace, prefix):
 def _reviewer_row(findings):
     """Findings-derived stats for a reviewer: counts, avg issue length, harshness."""
     n = len(findings)
-    blockers = sum(1 for f in findings if f.get("tier") == "blocker" or f.get("sev") == "high")
+    blockers = sum(
+        1 for f in findings if f.get("tier") == "blocker" or f.get("sev") == "high"
+    )
     suggestions = sum(1 for f in findings if f.get("kind") == "suggestion")
     nits = n - blockers - suggestions
     lengths = [len(str(f.get("issue", ""))) for f in findings]
     avg_len = round(sum(lengths) / n, 1) if n else 0.0
     weight = sum(_SEV_W.get(f.get("sev", "low"), 0.5) for f in findings)
+    # run@3 additive: per-finding failure-class breakout so the warehouse can
+    # GROUP BY tag / dim for recurrence + auto-graduation without re-parsing.
+    findings_detail = [
+        {
+            "dim": f.get("dim"),
+            "tag": f.get("tag"),
+            "sev": f.get("sev"),
+            "tier": f.get("tier"),
+            "where": f.get("where"),
+            "kind": f.get("kind"),
+        }
+        for f in findings
+    ]
     return {
+        "findings_detail": findings_detail,
         "findings": n,
         "blockers": blockers,
         "nits": max(0, nits),
         "suggestions": suggestions,
         "avg_issue_len": avg_len,
-        "harshness": round(weight, 1),          # severity-weighted volume
+        "harshness": round(weight, 1),  # severity-weighted volume
         "blocker_ratio": round(blockers / n, 2) if n else 0.0,
     }
 
 
 def rows_for_run(result, diff=None, repo=None, pr=None, ts=None):
-    """One stat row per character for a finished run@2 result. Pure/derived."""
+    """One stat row per character for a finished run@3 result. Pure/derived."""
     meta = result.get("meta", {}) or {}
     trace = result.get("trace") or []
     added, removed = diff_loc(diff)
@@ -96,6 +117,11 @@ def rows_for_run(result, diff=None, repo=None, pr=None, ts=None):
         "goal": result.get("goal"),
         "score": result.get("score"),
         "verdict": result.get("verdict"),
+        # run@3 additive diagnostics (present from CONTRACT_VERSION 3 on).
+        "rubric_score": result.get("rubric_score"),
+        "model_score": result.get("model_score"),
+        "grader_scores": result.get("grader_scores"),
+        "dimension_scores": result.get("dimension_scores"),
         "diff": {
             "bytes": meta.get("diff_bytes"),
             "changed_files": len(meta.get("changed_files") or []),
@@ -113,12 +139,14 @@ def rows_for_run(result, diff=None, repo=None, pr=None, ts=None):
         if key == "mission-control":
             # MC's "harshness" = how far below its own goal it landed the PR.
             gap = (result.get("goal") or 0) - (result.get("score") or 0)
-            row.update({
-                "findings": None,
-                "verdict_call": result.get("verdict"),
-                "goal_gap": gap,
-                "harshness": round(max(0, gap) / 100, 2),
-            })
+            row.update(
+                {
+                    "findings": None,
+                    "verdict_call": result.get("verdict"),
+                    "goal_gap": gap,
+                    "harshness": round(max(0, gap) / 100, 2),
+                }
+            )
         else:
             row.update(_reviewer_row(reviewers.get(key, {}).get("findings", [])))
         ms, comp, reason = _trace_for(trace, key)
@@ -157,12 +185,21 @@ def summarize(ledger=None):
             except json.JSONDecodeError:
                 continue  # a corrupt/half-written line shouldn't kill the report
             c = row.get("character")
-            a = agg.setdefault(c, {
-                "name": row.get("name"), "emoji": row.get("emoji"),
-                "prs_reviewed": 0, "loc_reviewed": 0, "findings": 0,
-                "blockers": 0, "total_ms": 0, "reasoning_tokens": 0,
-                "_harsh": [], "_avg_len": [],
-            })
+            a = agg.setdefault(
+                c,
+                {
+                    "name": row.get("name"),
+                    "emoji": row.get("emoji"),
+                    "prs_reviewed": 0,
+                    "loc_reviewed": 0,
+                    "findings": 0,
+                    "blockers": 0,
+                    "total_ms": 0,
+                    "reasoning_tokens": 0,
+                    "_harsh": [],
+                    "_avg_len": [],
+                },
+            )
             a["prs_reviewed"] += 1
             d = row.get("diff") or {}
             a["loc_reviewed"] += (d.get("added") or 0) + (d.get("removed") or 0)
@@ -175,8 +212,10 @@ def summarize(ledger=None):
             if row.get("avg_issue_len"):
                 a["_avg_len"].append(row["avg_issue_len"])
     for a in agg.values():
-        h, l = a.pop("_harsh"), a.pop("_avg_len")
+        h, lens = a.pop("_harsh"), a.pop("_avg_len")
         a["avg_harshness"] = round(sum(h) / len(h), 2) if h else 0.0
-        a["avg_issue_len"] = round(sum(l) / len(l), 1) if l else 0.0
-        a["avg_ms_per_pr"] = round(a["total_ms"] / a["prs_reviewed"]) if a["prs_reviewed"] else 0
+        a["avg_issue_len"] = round(sum(lens) / len(lens), 1) if lens else 0.0
+        a["avg_ms_per_pr"] = (
+            round(a["total_ms"] / a["prs_reviewed"]) if a["prs_reviewed"] else 0
+        )
     return agg
