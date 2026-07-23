@@ -141,6 +141,22 @@ def verdict_badge(verdict):
     return "🟠 **HOLD** — not cleared yet"
 
 
+def verdict_headline(verdict, score, goal):
+    """One scannable line: icon + state + score + goal, with the gap to goal."""
+    icon = "🟢" if verdict == "GO" else "🟠"
+    tail = "" if score >= goal else f" · need **+{goal - score}**"
+    return f"### {icon} {verdict} — **{score}/100** · goal {goal}{tail}"
+
+
+def at_a_glance(blockers, nits, suggestions):
+    """A compact counts line so the reader sees the shape before the detail."""
+    parts = [f"🚧 **{len(blockers)}** blocker{'s' if len(blockers) != 1 else ''}"]
+    parts.append(f"🧹 **{len(nits)}** nit{'s' if len(nits) != 1 else ''}")
+    if suggestions:
+        parts.append(f"💡 **{len(suggestions)}** suggestion{'s' if len(suggestions) != 1 else ''}")
+    return " &nbsp;·&nbsp; ".join(parts)
+
+
 def pick_band(verdict, score, goal):
     """GO-triumphant / HOLD-close (within 15 of goal) / HOLD-rough."""
     if verdict == "GO":
@@ -293,7 +309,8 @@ def raise_the_score(data, blockers, goal):
     m = reviewers.get("mammoth", {}).get("findings", [])
     current = rubric.rubric_score(r, m)
 
-    out = ["#### ⬆️ Raise the score", ""]
+    out = ["#### 🎯 Fastest path to GO", "",
+           "_Fix these first — each shows the score it recovers._", ""]
     for f in blockers:
         if f.get("_reviewer") == "Roaster":
             new = rubric.rubric_score(_without(r, f), m)
@@ -407,72 +424,72 @@ def compose(data, art_base=DEFAULT_ART_BASE, repo=None, sha=None, run_url=None,
 
     blockers, nits, suggestions = collect(reviewers)
 
+    art = f'<img src="{art_url}" alt="{band}" width="180" align="right" />'
+
     # GO with zero findings: short congratulatory comment, nothing else.
     if verdict == "GO" and not blockers and not nits and not suggestions:
         out = [
             MARKER,
-            "## 🚀 Preflight council review",
+            "## 🚀 Preflight review",
             "",
-            f"### {verdict_badge(verdict)}",
+            verdict_headline(verdict, score, goal),
             "",
             score_bar_line(score, goal),
             "",
-            f'<img src="{art_url}" alt="{band}" width="240" align="right" />',
+            art,
             "",
         ]
         if summary:
-            out.append(f"> 🧑‍🚀 **Mission Control:** {summary}")
+            out.append(f"> 🧑‍🚀 **Bottom line:** {summary}")
         else:
-            out.append("> 🧑‍🚀 **Mission Control:** Clean sweep — no blockers, no nits. Cleared for launch. 🎉")
+            out.append("> 🧑‍🚀 **Bottom line:** Clean sweep — no blockers, no nits. Cleared for launch. 🎉")
         out.append("")
         out.append("Nothing for the crew to gripe about. Ship it. 🚀")
         out.append("")
         out += footer(meta, run_url, trace, totals)
         return "\n".join(out) + "\n"
 
-    out = [MARKER, "## 🚀 Preflight council review", ""]
-
-    # Verdict + score + Mission Control summary-of-summaries.
-    out.append(f"### {verdict_badge(verdict)}")
+    # --- Digest first (scannable), details after (navigable) ---
+    out = [MARKER, "## 🚀 Preflight review", ""]
+    out.append(verdict_headline(verdict, score, goal))
     out.append("")
+    out.append(art)
     out.append(score_bar_line(score, goal))
     out.append("")
-    if summary:
-        out.append(f"> 🧑‍🚀 **Mission Control:** {summary}")
-        out.append("")
-
-    # Reaction art.
-    out.append(f'<img src="{art_url}" alt="{band}" width="240" align="right" />')
+    out.append(at_a_glance(blockers, nits, suggestions))
     out.append("")
-
-    # 1. Gating (visible).
-    if blockers:
-        out += gating_block(blockers, repo, sha, files)
-    else:
-        out.append("#### ✅ No gating problems")
-        out.append("")
-        out.append("_No merge-blockers from the crew — only the nits below._")
+    if summary:
+        out.append(f"> 🧑‍🚀 **Bottom line:** {summary}")
         out.append("")
 
-    # 2. Nits (collapsed).
-    out += nits_block(nits, repo, sha, files)
-
-    # 3. Suggestions (non-blocking, collapsed).
-    out += suggestions_block(suggestions, repo, sha, files)
-
-    # 4. Raise-the-score: exact rubric deltas per gating item, else top_actions.
+    # Lead with what to DO — the fastest path to GO, each fix showing its score.
     if blockers:
         out += raise_the_score(data, blockers, goal)
     else:
         actions = data.get("top_actions", [])
         if actions:
-            out.append("#### ⬆️ Raise the score")
+            out.append("#### 🎯 Raise the score")
             out.append("")
             for a in actions[:3]:
                 out.append(f"- [ ] {a}")
             out.append("")
 
-    # Footer.
+    out.append("---")
+    out.append("")
+
+    # Blocker detail — the crew's own words + exact locations.
+    if blockers:
+        out += gating_block(blockers, repo, sha, files)
+    else:
+        out.append("#### ✅ No blockers")
+        out.append("")
+        out.append("_Nothing blocks merge — only the nits below._")
+        out.append("")
+
+    # Collapsed depth: nits by file, non-blocking suggestions.
+    out += nits_block(nits, repo, sha, files)
+    out += suggestions_block(suggestions, repo, sha, files)
+
     out += footer(meta, run_url, trace, totals)
     return "\n".join(out) + "\n"
 
