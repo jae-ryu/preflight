@@ -100,6 +100,8 @@ def grader_breakdown(findings, grader):
     lane = LANES.get(grader, [])
     buckets = {d: [] for d in lane}
     for f in findings:
+        if not isinstance(f, dict):
+            continue  # malformed LLM output — stamp_dims skips these too
         d = f.get("dim") if f.get("dim") in lane else resolve_dim(f, grader)
         if d in buckets:
             buckets[d].append(f)

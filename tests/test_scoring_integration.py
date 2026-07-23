@@ -123,14 +123,39 @@ def test_dimension_breakout_isolates_weak_axis():
     assert grader == round((40 + 100 + 100 + 100) / 4)  # 85
 
 
-def test_mission_control_grader_score_equals_aggregate():
-    """The invariant the composer relies on: MC's grader row == the gate score."""
-    roaster = [_find("high", dim="correctness")]
-    mammoth = [_find("med", dim="tests")]
-    final = rubric.finalize(90, "HOLD", roaster, mammoth, goal=85)
-    diag = dimensions.breakdown(roaster, mammoth)
-    diag["grader_scores"]["mission_control"] = final["score"]
-    assert diag["grader_scores"]["mission_control"] == final["score"]
+def test_mission_control_grader_score_equals_aggregate(monkeypatch):
+    """The invariant the composer relies on: MC's grader row == the gate score.
+
+    Verified against the REAL assembly in cli.build_result (not a self-assign):
+    whatever build_result puts in grader_scores['mission_control'] must equal
+    the top-level result['score'].
+    """
+    from preflight import api, cli, crew
+
+    def fake(model, system, user, max_tokens, node=None):
+        if system is crew.MC_SYS:
+            return (
+                {"score": 90, "verdict": "GO", "summary": "x", "top_actions": []},
+                True,
+            )
+        if system is crew.ROASTER_SYS:
+            return (
+                {"summary": "b", "findings": [_find("high", dim="correctness")]},
+                True,
+            )
+        return ({"summary": "d", "findings": [_find("med", dim="tests")]}, True)
+
+    monkeypatch.setattr(api, "council_call", fake)
+    result, _ = cli.build_result("diff --git a/f b/f\n@@ -1 +1 @@\n+x\n", goal=85)
+    assert result["grader_scores"]["mission_control"] == result["score"]
+
+
+def test_grader_breakdown_survives_non_dict_findings():
+    """Malformed LLM output (a bare string in findings) must not crash scoring."""
+    findings = [_find("high", dim="correctness"), "garbage", None]
+    dims, grader = dimensions.grader_breakdown(findings, "roaster")
+    assert dims["correctness"] == 70  # the one real finding still counted
+    assert 0 <= grader <= 100
 
 
 def test_breakout_does_not_change_the_gate_score():
