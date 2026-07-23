@@ -21,7 +21,17 @@ import time
 
 import datetime
 
-from . import CONTRACT_VERSION, api, chunk, config, crew, dimensions, rubric, stats
+from . import (
+    CONTRACT_VERSION,
+    api,
+    chunk,
+    config,
+    crew,
+    dimensions,
+    feedback,
+    rubric,
+    stats,
+)
 from .diffcap import DEFAULT_CAP, cap_diff, changed_files
 
 # --- terminal paint (ported from preflight-showcase/preflight.py) ---
@@ -542,8 +552,9 @@ def main(argv=None):
 
     if args.cmd == "stats":
         agg = stats.summarize()
+        trust = feedback.trust_metrics()
         if args.json_out:
-            print(json.dumps(agg, indent=2))
+            print(json.dumps({"crew": agg, "trust": trust}, indent=2))
             return 0
         if not agg:
             print("no runs recorded yet — run `preflight review <pr>` first")
@@ -561,6 +572,18 @@ def main(argv=None):
             print(f"     avg note len : {a['avg_issue_len']} chars")
             print(f"     avg time/PR  : {a['avg_ms_per_pr'] / 1000:.1f}s")
             print(f"     reasoning tok: {a['reasoning_tokens']:,}")
+        sr = trust.get("signal_ratio")
+        if sr is not None or trust.get("findings_unknown"):
+            print(paint("\n  🎯 TRUST — ground-truth signal", "b"))
+            scored = trust.get("findings_scored", 0)
+            unknown = trust.get("findings_unknown", 0)
+            sr_txt = f"{sr:.0%}" if sr is not None else "n/a (no scored findings)"
+            print(f"     signal ratio : {sr_txt}  ({scored} scored, {unknown} unknown)")
+            pro = trust.get("pr_outcomes", {})
+            if pro.get("ci_pass_rate") is not None:
+                print(f"     CI pass rate : {pro['ci_pass_rate']:.0%}")
+            if pro.get("merge_rate") is not None:
+                print(f"     merge rate   : {pro['merge_rate']:.0%}")
         print("")
         return 0
 

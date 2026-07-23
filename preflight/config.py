@@ -10,6 +10,7 @@ Precedence (highest wins):   CLI flag  >  .council.yml  >  DEFAULTS (here)
 Kept dependency-free (a tiny YAML subset: `goal` + `paths`) so nothing here
 needs pyyaml — the same reason action/filter_diff.py stays stdlib-only.
 """
+
 import fnmatch
 import os
 import re
@@ -19,12 +20,17 @@ from .diffcap import DEFAULT_CAP
 
 # ---- baked-in defaults (the "already configured at the top" settings) -------
 DEFAULTS = {
-    "goal": 85,                       # repo-owner target score, 0-100
-    "cap": DEFAULT_CAP,               # single-pass diff budget before map-reduce
+    "goal": 85,  # repo-owner target score, 0-100
+    "cap": DEFAULT_CAP,  # single-pass diff budget before map-reduce
     "reviewer_model": api.REVIEWER_MODEL,
     "overseer_model": api.OVERSEER_MODEL,
     "art_base": "https://raw.githubusercontent.com/jae-ryu/preflight/main/art/reactions",
-    "paths": [],                      # empty = review the whole diff
+    "paths": [],  # empty = review the whole diff
+    # Holdout / anchor manifest: frozen past-run result files that anchor.py
+    # dual-scores across rubric versions to measure Δrubric, and that the
+    # honest loop (loop_guard.py) scores as its generalization set. Paths are
+    # relative to the repo root. Empty = no holdout configured yet.
+    "holdout": [],
 }
 
 DEFAULT_GOAL = DEFAULTS["goal"]
@@ -40,9 +46,13 @@ class Config:
         self.cap = int(merged["cap"])
         self.art_base = merged["art_base"]
         self.paths = list(merged["paths"])
+        self.holdout = list(merged.get("holdout") or [])
 
     def __repr__(self):
-        return f"Config(goal={self.goal}, cap={self.cap}, paths={self.paths})"
+        return (
+            f"Config(goal={self.goal}, cap={self.cap}, "
+            f"paths={self.paths}, holdout={self.holdout})"
+        )
 
 
 def _clean_item(s):
@@ -65,8 +75,8 @@ def _parse_council_yml(path):
     if not path or not os.path.exists(path):
         return {}
     out = {}
-    paths = []
-    in_paths = False
+    lists = {"paths": [], "holdout": []}
+    active = None  # which block list we are currently reading into
     with open(path) as f:
         for raw in f:
             line = raw.rstrip("\n")
@@ -75,27 +85,34 @@ def _parse_council_yml(path):
             m = re.match(r"\s*goal\s*:\s*(\d+)", line)
             if m:
                 out["goal"] = int(m.group(1))
-                in_paths = False
+                active = None
                 continue
-            m = re.match(r"\s*paths\s*:\s*\[(.*)\]", line)  # inline list
-            if m:
-                for item in m.group(1).split(","):
-                    item = _clean_item(item)
-                    if item:
-                        paths.append(item)
-                in_paths = False
+            matched_key = None
+            for key in lists:
+                m = re.match(rf"\s*{key}\s*:\s*\[(.*)\]", line)  # inline list
+                if m:
+                    for item in m.group(1).split(","):
+                        item = _clean_item(item)
+                        if item:
+                            lists[key].append(item)
+                    active = None
+                    matched_key = key
+                    break
+                if re.match(rf"\s*{key}\s*:\s*$", line):  # block list opener
+                    active = key
+                    matched_key = key
+                    break
+            if matched_key:
                 continue
-            if re.match(r"\s*paths\s*:\s*$", line):
-                in_paths = True
-                continue
-            if in_paths:
+            if active:
                 m = re.match(r"\s*-\s*(.+)", line)
                 if m:
-                    paths.append(_clean_item(m.group(1)))
+                    lists[active].append(_clean_item(m.group(1)))
                 else:
-                    in_paths = False
-    if paths:
-        out["paths"] = paths
+                    active = None
+    for key, vals in lists.items():
+        if vals:
+            out[key] = vals
     return out
 
 
@@ -138,8 +155,12 @@ def filter_diff(diff, patterns):
     for line in diff.splitlines(keepends=True):
         if line.startswith("diff --git "):
             parts = line.split()
-            path_b = parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else ""
-            path_a = parts[2][2:] if len(parts) >= 3 and parts[2].startswith("a/") else ""
+            path_b = (
+                parts[3][2:] if len(parts) >= 4 and parts[3].startswith("b/") else ""
+            )
+            path_a = (
+                parts[2][2:] if len(parts) >= 3 and parts[2].startswith("a/") else ""
+            )
             keep = _file_matches(path_b, patterns) or _file_matches(path_a, patterns)
         if keep:
             out.append(line)
