@@ -5,6 +5,7 @@ The council. Three characters, kept in voice — the voices ARE the product.
   🦣 MAMMOTH        (Kimi)  — fine-tooth comb: architecture, tests, docs, consistency.
   🧑‍🚀 MISSION CONTROL (Gemma) — overseer. Weighs both, scores, calls the launch.
 """
+
 import os
 import re
 
@@ -28,12 +29,23 @@ def coach(system, character):
         return system
     return f"{system}\n\nCOACHING FOR THIS RUN (overseer feedback — weigh it):\n{extra}"
 
+
 # Both reviewers emit the same JSON envelope. Findings feed the deterministic rubric.
 # Quality over volume: at most 3 gating problems + 5 nits. Don't spam the PR.
 REVIEWER_FMT = (
     'Return ONLY a JSON object: {"summary": "<=12 words, caveman-brief", '
-    '"findings": [{"sev":"high|med|low","where":"file:line or area",'
+    '"findings": [{"sev":"high|med|low","dim":"<one of YOUR lane dimensions>",'
+    '"tag":"<failure-class id, optional>","where":"file:line or area",'
     '"issue":"one line","say":"your in-character one-liner"}]}. '
+    'The "dim" field is REQUIRED and MUST be one of your lane dimensions (listed '
+    'in your charter above). The "tag" field is optional — when a finding fits a '
+    "known failure class use its id, otherwise omit it. "
+    "EVIDENCE RULE (hard gate on blockers): every high-severity finding MUST "
+    'include an "evidence" field quoting the exact line/span that proves it — the '
+    "code that is wrong, verbatim. If you cannot cite the proof, it is NOT a high "
+    "finding: downgrade it to med and phrase it as a question. No evidence, no "
+    "blocker. This is non-negotiable — an unprovable high finding is a phantom "
+    "blocker and erodes trust more than a missed nit. "
     'On a med/low finding you MAY add an optional "kind":"suggestion" field to mark '
     "it a non-blocking optimization/refactor idea (never on a high finding). "
     "Report at most 3 gating problems (high sev — things that should block merge) "
@@ -180,6 +192,7 @@ def dedupe_cross(roaster, mammoth):
     mammoth_out = {**mammoth, "findings": m_out}
     return roaster_out, mammoth_out, merged
 
+
 ROASTER_SYS = (
     "You are ROASTER, a flame mascot on a code-review crew. You hunt BUGS and "
     "CORRECTNESS problems: logic errors, edge cases that crash, wrong conditions, "
@@ -191,6 +204,32 @@ ROASTER_SYS = (
     "does not match its name is a HIGH finding even if the code has no crash "
     "(example: a load_config that returns a list of key names instead of the "
     "config). Report it as sev high with where=<file>:<def line>. "
+    "FAILURE-PATH FIDELITY — for any instrumentation, wrapper, context manager, "
+    "try/finally, or error handler (telemetry, logging, spans, dispatch loops), "
+    "trace what happens when the wrapped work RAISES, not just when it succeeds: "
+    "does the recorded status/span/log/return reflect the failure honestly, or "
+    "does it silently close as success, crash the caller, or let a finally-block "
+    "mask the original error? Instrumentation that lies on the error path is a "
+    "HIGH finding (example: a span left status=OK when its handler threw). "
+    "ERROR-HANDLING ROBUSTNESS — check every wrapper/try/except/finally and "
+    "every client-facing error for these, they are the ones that slip through: "
+    "(a) BEST-EFFORT SIDE-EFFECTS: telemetry/logging/metrics must never fail or "
+    "crash the operation they wrap — a side-effect whose failure propagates into "
+    "the main path is HIGH; (b) CATCH THE RIGHT TYPE: an `except` naming a "
+    "specific exception must match what the called code ACTUALLY raises, and a "
+    "'never crash' guard must catch broadly, not a guessed subtype (e.g. "
+    "`except OSError` misses a closed-stream `ValueError`); (c) EXCEPTION-STATE "
+    "TIMING: in a finally/except guard reason about `sys.exc_info()`/masking — a "
+    "guard inspecting exception state at the wrong point is HIGH (e.g. "
+    "`sys.exc_info()[0] is None` is ALWAYS false inside an `except`); (d) NO INFO "
+    "LEAK: error text returned to a client must not include raw exception detail "
+    "or internals — log detail server-side; (e) CONCURRENCY: shared sinks/files/"
+    "state written from multiple threads need a lock. "
+    'YOUR LANE DIMENSIONS — tag every finding\'s "dim" with exactly one of: '
+    "`correctness` (logic, wrong results, name-vs-behavior), `failure-path` "
+    "(instrumentation/error-handling that lies or crashes on the error path), "
+    "`security` (info leak, injection, auth), `resilience` (transport/network "
+    "faults, resource leaks, concurrency). "
     "Never report the same root cause twice — pick the sharpest framing. "
     + REVIEWER_FMT
 )
@@ -201,12 +240,30 @@ MAMMOTH_SYS = (
     "Roaster's lane; only overlap when it is genuinely a repo-pattern or design "
     "concern. Your mandate, in priority order:\n"
     "1. Repo fit: does this change repeat or violate patterns used elsewhere in the repo?\n"
+    "1b. DESIGN (as questions, never gating): is this the RIGHT approach — right "
+    "place, right abstraction, is there a simpler alternative? This is distinct "
+    "from repo-fit ('matches existing patterns' is NOT the same as 'is well "
+    'designed\'). Emit design findings with dim="design" and kind="suggestion", '
+    "always evidence-cited, NEVER high-severity — architecture judgment is where "
+    "you are least reliable, so raise it as a question a human decides, not a "
+    "verdict. When a repo dependency/structure MAP is provided, ground design and "
+    "repo-fit findings in it (how the change connects to the wider codebase) "
+    "rather than guessing from the diff alone.\n"
     "2. Missing tests: new logic with zero tests is ALWAYS a finding.\n"
     "3. Docs right-sized: flag missing docs AND fluff comments that add noise.\n"
     "4. Maintainability for humans AND agents (names, structure, single-purpose functions).\n"
-    "5. Optimization/refactor ideas: emit these with \"kind\":\"suggestion\" so they "
+    "5. Transport safety: on a stdio-based protocol (e.g. MCP over stdio), stdout "
+    "is reserved for the protocol — diagnostic/log output MUST go to stderr.\n"
+    "6. Resource lifecycle: every client/connection/handle is closed on ALL "
+    "paths, including errors and early returns.\n"
+    '7. Optimization/refactor ideas: emit these with "kind":"suggestion" so they '
     "render as non-blocking suggestions, never gating.\n"
-    + REVIEWER_FMT
+    'YOUR LANE DIMENSIONS — tag every finding\'s "dim" with exactly one of: '
+    "`repo-fit` (violates repo patterns, foreign structure, build artifacts, "
+    "duplication), `design` (wrong approach/place/abstraction — questions only, "
+    "never high), `tests` (missing/weak tests, unverified claims), `docs` "
+    "(missing or fluff docs), `maintainability` (names, structure, "
+    "single-purpose functions, transport/lifecycle hygiene).\n" + REVIEWER_FMT
 )
 
 MC_SYS = (
@@ -218,6 +275,12 @@ MC_SYS = (
     "low -1, with the TOTAL nit deduction capped at -10. Floor 0. Verdict is GO only "
     "if score >= goal AND there are ZERO blockers (any high-severity finding, either "
     "reviewer); otherwise HOLD.\n"
+    "SCOPE/SIZE: you are told the PR's changed line count. Reviews reliably catch "
+    "defects only up to ~400 changed lines; above that, detection falls off a "
+    "cliff. If the PR exceeds ~400 LOC, add 'Consider splitting this PR (~N LOC — "
+    "review quality drops above 400)' as the FIRST top_action. This is advisory, "
+    "NOT a blocker and does NOT lower the score — surface the risk, let the human "
+    "decide.\n"
     'Return ONLY a JSON object: {"score": 0-100, "verdict":"GO|HOLD", '
     '"summary":"<=20 words caveman-brief exec summary", '
     '"top_actions":["<=3 concrete fixes to raise the score, highest leverage first"]}. '
@@ -237,8 +300,12 @@ def _reviewer(name, system, diff, repo_map=None, node=None):
     else:
         user = f"Review this diff:\n\n{diff}"
     data, ok = api.council_call(
-        api.REVIEWER_MODEL, coach(system, name), user,
-        api.REVIEWER_MAX_TOKENS, node=node)
+        api.REVIEWER_MODEL,
+        coach(system, name),
+        user,
+        api.REVIEWER_MAX_TOKENS,
+        node=node,
+    )
     if not ok or data is None:
         return name, {"summary": "(could not parse)", "findings": [], "parse_ok": False}
     findings = data.get("findings") or []
@@ -253,7 +320,9 @@ def run_reviewers(diff, executor, repo_map=None):
     """Run ROASTER and MAMMOTH concurrently. Returns (roaster, mammoth) dicts."""
     futs = [
         executor.submit(_reviewer, "roaster", ROASTER_SYS, diff, None, "roaster-c1"),
-        executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, diff, repo_map, "mammoth-c1"),
+        executor.submit(
+            _reviewer, "mammoth", MAMMOTH_SYS, diff, repo_map, "mammoth-c1"
+        ),
     ]
     reports = {}
     for fut in futs:
@@ -280,9 +349,14 @@ def compress_summaries(summaries):
         "no quotes, no prose."
     )
     try:
-        resp = api.post_chat(api.OVERSEER_MODEL, system,
-                             f"Summaries:\n{joined}", 120, temperature=0.3,
-                             node="chunk-summary")
+        resp = api.post_chat(
+            api.OVERSEER_MODEL,
+            system,
+            f"Summaries:\n{joined}",
+            120,
+            temperature=0.3,
+            node="chunk-summary",
+        )
         line = (api._message_of(resp).get("content") or "").strip()
         line = line.strip('"').strip()
         if line:
@@ -310,10 +384,18 @@ def run_reviewers_chunked(chunks, executor, repo_map=None):
     Returns (roaster, mammoth) merged reviewer dicts.
     """
     tasks = {
-        "roaster": [executor.submit(_reviewer, "roaster", ROASTER_SYS, ch, None, f"roaster-c{i + 1}")
-                    for i, ch in enumerate(chunks)],
-        "mammoth": [executor.submit(_reviewer, "mammoth", MAMMOTH_SYS, ch, repo_map, f"mammoth-c{i + 1}")
-                    for i, ch in enumerate(chunks)],
+        "roaster": [
+            executor.submit(
+                _reviewer, "roaster", ROASTER_SYS, ch, None, f"roaster-c{i + 1}"
+            )
+            for i, ch in enumerate(chunks)
+        ],
+        "mammoth": [
+            executor.submit(
+                _reviewer, "mammoth", MAMMOTH_SYS, ch, repo_map, f"mammoth-c{i + 1}"
+            )
+            for i, ch in enumerate(chunks)
+        ],
     }
     out = {}
     for name in ("roaster", "mammoth"):
@@ -322,17 +404,33 @@ def run_reviewers_chunked(chunks, executor, repo_map=None):
     return out["roaster"], out["mammoth"]
 
 
-def run_overseer(goal, roaster, mammoth):
-    """Run MISSION CONTROL. Returns (mc_dict, parse_ok)."""
+def run_overseer(goal, roaster, mammoth, loc=None):
+    """Run MISSION CONTROL. Returns (mc_dict, parse_ok).
+
+    ``loc`` is the PR's changed line count (added+removed). It is fed to the
+    overseer so it can flag oversized PRs (the ~400-LOC defect-detection cliff)
+    in top_actions — advisory, non-gating.
+    """
     import json
-    packet = json.dumps({"goal": goal, "roaster": roaster, "mammoth": mammoth}, indent=1)
+
+    packet = json.dumps(
+        {"goal": goal, "roaster": roaster, "mammoth": mammoth}, indent=1
+    )
+    loc_line = f"PR changed lines (added+removed): {loc}.\n" if loc is not None else ""
     data, ok = api.council_call(
-        api.OVERSEER_MODEL, coach(MC_SYS, "mission-control"),
-        f"Goal score is {goal}. Reviewer reports:\n{packet}",
-        api.OVERSEER_MAX_TOKENS, node="mission-control")
+        api.OVERSEER_MODEL,
+        coach(MC_SYS, "mission-control"),
+        f"Goal score is {goal}. {loc_line}Reviewer reports:\n{packet}",
+        api.OVERSEER_MAX_TOKENS,
+        node="mission-control",
+    )
     if not ok or data is None:
-        return {"score": 0, "verdict": "HOLD",
-                "summary": "overseer parse fail", "top_actions": []}, False
+        return {
+            "score": 0,
+            "verdict": "HOLD",
+            "summary": "overseer parse fail",
+            "top_actions": [],
+        }, False
     return {
         "score": data.get("score", 0),
         "verdict": data.get("verdict", "HOLD"),

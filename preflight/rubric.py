@@ -21,11 +21,18 @@ blockers (any high-severity finding, either reviewer) — that gate is enforced 
 in code regardless of what the model said.
 """
 
+# The scoring rubric's own version. Bump on ANY change to the deduction math,
+# clamp band, tiering, or gate logic — every run records the rubric_version that
+# produced its score, so a rubric change shows up on the trend as a labelled
+# discontinuity (never averaged through), and an anchor set can be dual-scored
+# across versions to measure the exact offset (Δrubric). See the tune-up report §06.
+RUBRIC_VERSION = 1
+
 CLAMP_BAND = 5
 
 # Blocker (high-severity) deductions.
-DEDUCT_BLOCKER_CORRECTNESS = 12   # ROASTER high
-DEDUCT_BLOCKER_DESIGN = 8         # MAMMOTH high
+DEDUCT_BLOCKER_CORRECTNESS = 12  # ROASTER high
+DEDUCT_BLOCKER_DESIGN = 8  # MAMMOTH high
 
 # Nit (med/low) deductions, with a combined cap.
 DEDUCT_NIT_MED = 3
@@ -57,10 +64,12 @@ def apply_tiers(findings):
 
 def count_tiers(roaster_findings, mammoth_findings):
     """Return (blockers, nits) counts across both reviewers."""
-    blockers = sum(1 for f in roaster_findings if is_blocker(f)) \
-        + sum(1 for f in mammoth_findings if is_blocker(f))
-    nits = sum(1 for f in roaster_findings if not is_blocker(f)) \
-        + sum(1 for f in mammoth_findings if not is_blocker(f))
+    blockers = sum(1 for f in roaster_findings if is_blocker(f)) + sum(
+        1 for f in mammoth_findings if is_blocker(f)
+    )
+    nits = sum(1 for f in roaster_findings if not is_blocker(f)) + sum(
+        1 for f in mammoth_findings if not is_blocker(f)
+    )
     return blockers, nits
 
 
@@ -93,8 +102,9 @@ def rubric_score(roaster_findings, mammoth_findings):
 
 def has_blockers(roaster_findings, mammoth_findings):
     """True if any blocker (high-severity finding) stands, either reviewer."""
-    return any(is_blocker(f) for f in roaster_findings) \
-        or any(is_blocker(f) for f in mammoth_findings)
+    return any(is_blocker(f) for f in roaster_findings) or any(
+        is_blocker(f) for f in mammoth_findings
+    )
 
 
 def _clamp(value, lo, hi):
@@ -129,4 +139,5 @@ def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goa
         "model_score": ms,
         "blockers": blockers,
         "nits": nits,
+        "rubric_version": RUBRIC_VERSION,
     }

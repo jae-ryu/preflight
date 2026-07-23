@@ -41,6 +41,14 @@ def test_rows_one_per_character():
     assert by["roaster"]["diff"]["removed"] == 1
 
 
+def test_reviewer_row_survives_non_dict_findings():
+    """Malformed LLM output (bare string/None in findings) must not crash stats."""
+    row = stats._reviewer_row([{"sev": "high", "issue": "real"}, "garbage", None])
+    assert row["findings"] == 1  # only the real dict counted
+    assert row["blockers"] == 1
+    assert len(row["findings_detail"]) == 1
+
+
 def test_append_and_summarize(tmp_path):
     ledger = str(tmp_path / "s.jsonl")
     stats.append(RESULT, diff=DIFF, repo="o/r", pr="1", ts="T", ledger=ledger)
