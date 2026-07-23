@@ -20,7 +20,7 @@ import time
 
 import datetime
 
-from . import CONTRACT_VERSION, api, chunk, config, crew, rubric, stats
+from . import CONTRACT_VERSION, api, chunk, config, crew, dimensions, rubric, stats
 from .diffcap import DEFAULT_CAP, cap_diff, changed_files
 
 # --- terminal paint (ported from preflight-showcase/preflight.py) ---
@@ -153,11 +153,20 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
     rubric.apply_tiers(roaster["findings"])
     rubric.apply_tiers(mammoth["findings"])
 
+    # Attribute each finding to a lane dimension (the robustness breakout).
+    dimensions.stamp_dims(roaster["findings"], "roaster")
+    dimensions.stamp_dims(mammoth["findings"], "mammoth")
+
     mc, _mc_ok = crew.run_overseer(goal, roaster, mammoth)
 
     final = rubric.finalize(
         mc.get("score", 0), mc.get("verdict", "HOLD"),
         roaster["findings"], mammoth["findings"], goal)
+
+    # Per-grader / per-dimension diagnostic breakout. Mission Control's grader
+    # score IS the finalized aggregate (the gate number).
+    diag = dimensions.breakdown(roaster["findings"], mammoth["findings"])
+    diag["grader_scores"]["mission_control"] = final["score"]
 
     wall_ms = int((time.time() - wall_start) * 1000)
     trace = _assemble_trace(chunked=chunk_texts is not None)
@@ -170,6 +179,10 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
         "verdict": final["verdict"],
         "blockers": final["blockers"],
         "nits": final["nits"],
+        "rubric_score": final["rubric_score"],
+        "model_score": final["model_score"],
+        "grader_scores": diag["grader_scores"],
+        "dimension_scores": diag["dimension_scores"],
         "summary": mc.get("summary", ""),
         "top_actions": mc.get("top_actions", []),
         "reviewers": {

@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from preflight import api, cli, crew
+from preflight import api, cli, crew, dimensions
 
 
 def _install_council(monkeypatch, roaster, mammoth, mc, roaster_ok=True,
@@ -33,11 +33,16 @@ def test_contract_shape_and_hold(monkeypatch):
         mc={"score": 80, "verdict": "GO", "summary": "looks close", "top_actions": ["fix bug"]},
     )
     result, infra_ok = cli.build_result(DIFF, goal=85)
-    # Frozen contract keys (v2).
+    # Frozen contract keys (v3 — adds the per-grader/per-dimension breakout).
     assert set(result) == {"version", "goal", "score", "verdict", "blockers",
-                           "nits", "summary", "top_actions", "reviewers", "meta",
-                           "trace", "totals"}
-    assert result["version"] == 2
+                           "nits", "rubric_score", "model_score", "grader_scores",
+                           "dimension_scores", "summary", "top_actions",
+                           "reviewers", "meta", "trace", "totals"}
+    assert result["version"] == 3
+    # Breakout shape: three graders, each lane's dimensions present.
+    assert set(result["grader_scores"]) == {"roaster", "mammoth", "mission_control"}
+    assert set(result["dimension_scores"]["roaster"]) == set(dimensions.LANES["roaster"])
+    assert set(result["dimension_scores"]["mammoth"]) == set(dimensions.LANES["mammoth"])
     assert set(result["reviewers"]) == {"roaster", "mammoth"}
     for rev in result["reviewers"].values():
         assert set(rev) == {"summary", "findings", "parse_ok"}

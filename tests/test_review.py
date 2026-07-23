@@ -106,7 +106,7 @@ def test_review_writes_json_contract(monkeypatch, tmp_path):
     out = tmp_path / "run.json"
     cli.main(["review", "5", "--repo", "o/r", "--json", str(out)])
     data = json.loads(out.read_text())
-    assert data["version"] == 2
+    assert data["version"] == 3
     assert data["verdict"] == "HOLD"
 
 

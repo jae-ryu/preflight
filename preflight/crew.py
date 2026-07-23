@@ -32,8 +32,12 @@ def coach(system, character):
 # Quality over volume: at most 3 gating problems + 5 nits. Don't spam the PR.
 REVIEWER_FMT = (
     'Return ONLY a JSON object: {"summary": "<=12 words, caveman-brief", '
-    '"findings": [{"sev":"high|med|low","where":"file:line or area",'
+    '"findings": [{"sev":"high|med|low","dim":"<one of YOUR lane dimensions>",'
+    '"tag":"<failure-class id, optional>","where":"file:line or area",'
     '"issue":"one line","say":"your in-character one-liner"}]}. '
+    'The "dim" field is REQUIRED and MUST be one of your lane dimensions (listed '
+    'in your charter above). The "tag" field is optional — when a finding fits a '
+    "known failure class use its id, otherwise omit it. "
     'On a med/low finding you MAY add an optional "kind":"suggestion" field to mark '
     "it a non-blocking optimization/refactor idea (never on a high finding). "
     "Report at most 3 gating problems (high sev — things that should block merge) "
@@ -212,6 +216,11 @@ ROASTER_SYS = (
     "LEAK: error text returned to a client must not include raw exception detail "
     "or internals — log detail server-side; (e) CONCURRENCY: shared sinks/files/"
     "state written from multiple threads need a lock. "
+    "YOUR LANE DIMENSIONS — tag every finding's \"dim\" with exactly one of: "
+    "`correctness` (logic, wrong results, name-vs-behavior), `failure-path` "
+    "(instrumentation/error-handling that lies or crashes on the error path), "
+    "`security` (info leak, injection, auth), `resilience` (transport/network "
+    "faults, resource leaks, concurrency). "
     "Never report the same root cause twice — pick the sharpest framing. "
     + REVIEWER_FMT
 )
@@ -231,6 +240,11 @@ MAMMOTH_SYS = (
     "paths, including errors and early returns.\n"
     "7. Optimization/refactor ideas: emit these with \"kind\":\"suggestion\" so they "
     "render as non-blocking suggestions, never gating.\n"
+    "YOUR LANE DIMENSIONS — tag every finding's \"dim\" with exactly one of: "
+    "`repo-fit` (violates repo patterns, foreign structure, build artifacts, "
+    "duplication), `tests` (missing/weak tests, unverified claims), `docs` "
+    "(missing or fluff docs), `maintainability` (names, structure, "
+    "single-purpose functions, transport/lifecycle hygiene).\n"
     + REVIEWER_FMT
 )
 
