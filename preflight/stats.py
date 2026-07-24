@@ -122,6 +122,10 @@ def rows_for_run(result, diff=None, repo=None, pr=None, ts=None):
         # run@3 additive diagnostics (present from CONTRACT_VERSION 3 on).
         "rubric_score": result.get("rubric_score"),
         "model_score": result.get("model_score"),
+        # The rubric version that produced this score, so a rubric change shows
+        # up as a labelled discontinuity on the trend (never averaged through)
+        # and anchor.py can dual-score an anchor set across versions. Additive.
+        "rubric_version": result.get("rubric_version"),
         "grader_scores": result.get("grader_scores"),
         "dimension_scores": result.get("dimension_scores"),
         "diff": {
@@ -171,48 +175,64 @@ def append(result, diff=None, repo=None, pr=None, ts=None, ledger=None):
     return rows
 
 
+def read_rows(ledger=None):
+    """Load raw ledger rows (list of dicts). Missing file -> []; corrupt lines
+    skipped. The shared reader for summarize() and the feedback join."""
+    ledger = _resolve(ledger)
+    if not os.path.exists(ledger):
+        return []
+    try:
+        with open(ledger, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        # unreadable ledger (perms, or the path is a directory) degrades to no
+        # rows rather than crashing the report — same spirit as missing-file.
+        return []
+    rows = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a corrupt/half-written line shouldn't kill the report
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
 def summarize(ledger=None):
     """Aggregate the ledger into per-character lifetime stats (the charter view)."""
     agg = {}
-    ledger = _resolve(ledger)
-    if not os.path.exists(ledger):
-        return agg
-    with open(ledger) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # a corrupt/half-written line shouldn't kill the report
-            c = row.get("character")
-            a = agg.setdefault(
-                c,
-                {
-                    "name": row.get("name"),
-                    "emoji": row.get("emoji"),
-                    "prs_reviewed": 0,
-                    "loc_reviewed": 0,
-                    "findings": 0,
-                    "blockers": 0,
-                    "total_ms": 0,
-                    "reasoning_tokens": 0,
-                    "_harsh": [],
-                    "_avg_len": [],
-                },
-            )
-            a["prs_reviewed"] += 1
-            d = row.get("diff") or {}
-            a["loc_reviewed"] += (d.get("added") or 0) + (d.get("removed") or 0)
-            a["findings"] += row.get("findings") or 0
-            a["blockers"] += row.get("blockers") or 0
-            a["total_ms"] += row.get("duration_ms") or 0
-            a["reasoning_tokens"] += (row.get("tokens") or {}).get("reasoning", 0)
-            if row.get("harshness") is not None:
-                a["_harsh"].append(row["harshness"])
-            if row.get("avg_issue_len"):
-                a["_avg_len"].append(row["avg_issue_len"])
+    for row in read_rows(ledger):
+        c = row.get("character")
+        a = agg.setdefault(
+            c,
+            {
+                "name": row.get("name"),
+                "emoji": row.get("emoji"),
+                "prs_reviewed": 0,
+                "loc_reviewed": 0,
+                "findings": 0,
+                "blockers": 0,
+                "total_ms": 0,
+                "reasoning_tokens": 0,
+                "_harsh": [],
+                "_avg_len": [],
+            },
+        )
+        a["prs_reviewed"] += 1
+        d = row.get("diff") or {}
+        a["loc_reviewed"] += (d.get("added") or 0) + (d.get("removed") or 0)
+        a["findings"] += row.get("findings") or 0
+        a["blockers"] += row.get("blockers") or 0
+        a["total_ms"] += row.get("duration_ms") or 0
+        a["reasoning_tokens"] += (row.get("tokens") or {}).get("reasoning", 0)
+        if row.get("harshness") is not None:
+            a["_harsh"].append(row["harshness"])
+        if row.get("avg_issue_len"):
+            a["_avg_len"].append(row["avg_issue_len"])
     for a in agg.values():
         h, lens = a.pop("_harsh"), a.pop("_avg_len")
         a["avg_harshness"] = round(sum(h) / len(h), 2) if h else 0.0
