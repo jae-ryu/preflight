@@ -181,24 +181,24 @@ def read_rows(ledger=None):
     ledger = _resolve(ledger)
     if not os.path.exists(ledger):
         return []
-    rows = []
     try:
-        f = open(ledger, encoding="utf-8", errors="replace")
+        with open(ledger, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
     except OSError:
         # unreadable ledger (perms, or the path is a directory) degrades to no
-        # rows rather than crashing the report — same spirit as missing-file
+        # rows rather than crashing the report — same spirit as missing-file.
         return []
-    with f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue  # a corrupt/half-written line shouldn't kill the report
-            if isinstance(row, dict):
-                rows.append(row)
+    rows = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # a corrupt/half-written line shouldn't kill the report
+        if isinstance(row, dict):
+            rows.append(row)
     return rows
 
 
