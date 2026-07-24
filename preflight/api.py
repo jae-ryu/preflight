@@ -2,7 +2,13 @@
 Modular Cloud (MCloud) HTTP client + robust JSON extraction for reasoning models.
 
 MCloud is OpenAI-compatible. Chat lives at POST /v1/chat/completions with an
-`Authorization: Bearer $MODULAR_API_KEY` header.
+`Authorization: Bearer $MODULAR_API_KEY` header. This is Preflight's thin,
+stdlib-only client; it mirrors the shared BOS Modular Cloud client
+(`bos_handlers.mcloud`, the gateway that owns discovery/observability). The
+endpoint and per-task models are *configured, never hardcoded* — the base URL
+comes from MODULAR_BASE_URL and the models resolve through `models` (which reads
+the environment, so the shared registry can steer task→model without a code
+change). Preflight is one application of Modular Cloud, not the owner.
 
 Kimi K2.6 is a *reasoning* model: the response `message` carries BOTH `content`
 and `reasoning_content`, and `usage.completion_tokens_details.reasoning_tokens`
@@ -21,10 +27,17 @@ import time
 import urllib.error
 import urllib.request
 
-API_URL = "https://api.modular.com/v1/chat/completions"
+from . import models
 
-REVIEWER_MODEL = "moonshotai/kimi-k2.6"      # reasoning — the reviewers
-OVERSEER_MODEL = "google/gemma-4-31b-it"     # fast — the overseer
+# Endpoint + models are configured, never hardcoded. The base URL is env-driven
+# (MODULAR_BASE_URL) and the per-task models resolve through `models`, mirroring
+# the shared registry's task→model contract (reasoning = reviewers, fast =
+# overseer). See models.py for the resolution precedence.
+_BASE_URL = (os.environ.get("MODULAR_BASE_URL") or "https://api.modular.com").rstrip("/")
+API_URL = f"{_BASE_URL}/v1/chat/completions"
+
+REVIEWER_MODEL = models.reviewer_model()     # reasoning task — the reviewers
+OVERSEER_MODEL = models.overseer_model()     # fast task — the overseer
 
 # Reasoning models spend the token budget thinking before they answer; budget big.
 REVIEWER_MAX_TOKENS = 20000
