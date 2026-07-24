@@ -23,8 +23,8 @@ import urllib.request
 
 API_URL = "https://api.modular.com/v1/chat/completions"
 
-REVIEWER_MODEL = "moonshotai/Kimi-K2.6"      # reasoning — the reviewers
-OVERSEER_MODEL = "google/gemma-4-31B-it"     # fast — the overseer
+REVIEWER_MODEL = "moonshotai/kimi-k2.6"      # reasoning — the reviewers
+OVERSEER_MODEL = "google/gemma-4-31b-it"     # fast — the overseer
 
 # Reasoning models spend the token budget thinking before they answer; budget big.
 REVIEWER_MAX_TOKENS = 20000
