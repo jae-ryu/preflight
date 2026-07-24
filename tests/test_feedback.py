@@ -244,3 +244,41 @@ def test_trust_metrics_empty_is_safe(tmp_path):
     assert m["signal_ratio"] is None
     assert m["by_tag"] == {}
     assert m["pr_outcomes"]["prs"] == 0
+
+
+def test_trust_metrics_degrades_on_unreadable_paths(tmp_path):
+    # council blocker: docstring promised "never raises" but a ledger/feedback
+    # read that blows up (here: the path is a DIRECTORY, so open() raises
+    # IsADirectoryError, not JSONDecodeError) must degrade to empty, not crash.
+    bad_dir = tmp_path / "iam-a-dir"
+    bad_dir.mkdir()
+    m = feedback.trust_metrics(
+        feedback_path=str(bad_dir), ledger_path=str(bad_dir)
+    )
+    assert m["signal_ratio"] is None
+    assert m["findings_scored"] == 0
+    assert m["by_dimension"] == {}
+    assert m["pr_outcomes"]["prs"] == 0
+
+
+def test_ledger_index_tolerates_non_list_findings_detail():
+    # a truthy non-list findings_detail (e.g. an int) must not crash join().
+    ledger_rows = [
+        {"repo": "o/r", "pr": "1", "character": "roaster", "findings_detail": 5},
+        {"repo": "o/r", "pr": "1", "character": "roaster",
+         "findings_detail": [{"where": "a.py:1", "dim": "correctness"}]},
+    ]
+    joined = feedback.join([_finding("a.py:1", "acted-on")], ledger_rows)
+    assert joined[0]["dim"] == "correctness"
+
+
+def test_load_tolerates_non_utf8_bytes(tmp_path):
+    # non-UTF-8 bytes on a JSONL line must be replaced, not raise.
+    p = tmp_path / "fb.jsonl"
+    p.write_bytes(
+        (json.dumps(_finding("a.py:1", "acted-on")) + "\n").encode()
+        + b"\xff\xfe not utf-8\n"
+        + (json.dumps(_finding("a.py:2", "dismissed")) + "\n").encode()
+    )
+    rows = feedback.load(str(p))
+    assert len(rows) == 2

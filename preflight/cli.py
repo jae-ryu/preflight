@@ -552,7 +552,15 @@ def main(argv=None):
 
     if args.cmd == "stats":
         agg = stats.summarize()
-        trust = feedback.trust_metrics()
+        # trust_metrics is contracted never to raise, but guard the call anyway:
+        # the stats command must still print crew stats (and reach the "no runs
+        # recorded yet" message) even if the trust surface ever degrades.
+        try:
+            trust = feedback.trust_metrics()
+        except Exception:
+            trust = {}
+        if not isinstance(trust, dict):
+            trust = {}
         if args.json_out:
             print(json.dumps({"crew": agg, "trust": trust}, indent=2))
             return 0

@@ -182,7 +182,13 @@ def read_rows(ledger=None):
     if not os.path.exists(ledger):
         return []
     rows = []
-    with open(ledger) as f:
+    try:
+        f = open(ledger, encoding="utf-8", errors="replace")
+    except OSError:
+        # unreadable ledger (perms, or the path is a directory) degrades to no
+        # rows rather than crashing the report — same spirit as missing-file
+        return []
+    with f:
         for line in f:
             line = line.strip()
             if not line:

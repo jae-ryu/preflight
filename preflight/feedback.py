@@ -74,8 +74,13 @@ def load(path=None):
     path = _resolve(path)
     if not os.path.exists(path):
         return []
-    with open(path) as f:
-        text = f.read()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        # unreadable feedback file (perms, or the path is a directory) degrades
+        # to no records rather than crashing — same spirit as missing-file
+        return []
     stripped = text.lstrip()
     if stripped.startswith("["):
         try:
@@ -114,7 +119,10 @@ def _ledger_index(ledger_rows):
         if not isinstance(row, dict):
             continue
         grader = row.get("character")
-        for d in row.get("findings_detail") or []:
+        detail = row.get("findings_detail")
+        if not isinstance(detail, list):
+            continue  # a non-list truthy value must not crash the loop
+        for d in detail:
             if not isinstance(d, dict):
                 continue
             k = _key(row.get("repo"), row.get("pr"), d.get("where"))
@@ -236,15 +244,30 @@ def pr_outcomes(feedback):
     }
 
 
+def _safe(fn, arg, default):
+    """Call fn(arg), degrading ANY exception to `default`.
+
+    trust_metrics promises never to raise, but the underlying readers still
+    touch the filesystem — the path can be a directory, unreadable, or hold
+    bytes json can't decode. Those are exactly the cases a "safe" surface must
+    swallow rather than let the whole CLI crash on one bad file.
+    """
+    try:
+        return fn(arg)
+    except Exception:
+        return default
+
+
 def trust_metrics(feedback_path=None, ledger_path=None):
     """The queryable trust surface: signal ratio + rollups + PR outcomes.
 
     Reads the feedback ledger and joins it to the run ledger (stats.py). Safe on
-    empty inputs — every field degrades to None/{} rather than raising. This is
-    what the `stats` CLI surfaces and what a warehouse view would ingest.
+    empty OR unreadable inputs — every field degrades to None/{} rather than
+    raising, and a read that blows up is treated as "no data" (never a crash).
+    This is what the `stats` CLI surfaces and what a warehouse view would ingest.
     """
-    feedback = load(feedback_path)
-    ledger_rows = stats.read_rows(ledger_path)
+    feedback = _safe(load, feedback_path, default=[])
+    ledger_rows = _safe(stats.read_rows, ledger_path, default=[])
     joined = join(feedback, ledger_rows)
     return {
         "signal_ratio": signal_ratio(joined),
