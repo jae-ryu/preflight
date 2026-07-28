@@ -4,6 +4,12 @@ The council. Three characters, kept in voice — the voices ARE the product.
   🔥 ROASTER        (Kimi)  — bugs & correctness. Flames the flaw, still helpful.
   🦣 MAMMOTH        (Kimi)  — fine-tooth comb: architecture, tests, docs, consistency.
   🧑‍🚀 MISSION CONTROL (Gemma) — overseer. Weighs both, scores, calls the launch.
+
+Model assignment is by *task*, not baked-in names: the reviewers run the
+``reasoning`` task (``api.REVIEWER_MODEL``) and Mission Control + summary
+compression run the ``fast`` task (``api.OVERSEER_MODEL``). Both resolve through
+``models`` (env-overridable), so the shared BOS Modular Cloud registry can steer
+which model serves which task without editing the crew.
 """
 
 import os

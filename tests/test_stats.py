@@ -41,6 +41,32 @@ def test_rows_one_per_character():
     assert by["roaster"]["diff"]["removed"] == 1
 
 
+def test_rows_carry_rubric_version():
+    result = dict(RESULT)
+    result["rubric_version"] = 1
+    rows = stats.rows_for_run(result)
+    assert all(r["rubric_version"] == 1 for r in rows)
+
+
+def test_read_rows_round_trips_and_tolerates_corruption(tmp_path):
+    led = tmp_path / "ledger.jsonl"
+    stats.append(RESULT, diff=DIFF, repo="o/r", pr="1", ts="T", ledger=str(led))
+    with open(led, "a") as f:
+        f.write("not json\n")  # a half-written line must not kill the reader
+    rows = stats.read_rows(str(led))
+    assert len(rows) == 3  # 3 characters, corrupt line skipped
+    assert stats.read_rows(str(tmp_path / "missing.jsonl")) == []
+
+
+def test_read_rows_tolerates_unreadable_ledger(tmp_path):
+    """An unreadable ledger (a directory here) degrades to [] rather than
+    raising — the council flagged summarize/trust_metrics crashing on this."""
+    as_dir = tmp_path / "ledger_is_a_dir"
+    as_dir.mkdir()
+    assert stats.read_rows(str(as_dir)) == []
+    assert stats.summarize(str(as_dir)) == {}
+
+
 def test_reviewer_row_survives_non_dict_findings():
     """Malformed LLM output (bare string/None in findings) must not crash stats."""
     row = stats._reviewer_row([{"sev": "high", "issue": "real"}, "garbage", None])

@@ -6,6 +6,30 @@ def test_defaults_when_no_file(tmp_path):
     cfg = config.load(council_yml=str(tmp_path / "nope.yml"))
     assert cfg.goal == config.DEFAULT_GOAL == 85
     assert cfg.paths == []
+    assert cfg.holdout == []
+
+
+def test_holdout_block_list(tmp_path):
+    y = tmp_path / ".council.yml"
+    y.write_text("goal: 90\nholdout:\n  - runs/anchor-1.json\n  - runs/anchor-2.json\n")
+    cfg = config.load(council_yml=str(y))
+    assert cfg.holdout == ["runs/anchor-1.json", "runs/anchor-2.json"]
+    assert cfg.goal == 90
+
+
+def test_holdout_inline_list(tmp_path):
+    y = tmp_path / ".council.yml"
+    y.write_text('holdout: ["runs/a.json", "runs/b.json"]\n')
+    cfg = config.load(council_yml=str(y))
+    assert cfg.holdout == ["runs/a.json", "runs/b.json"]
+
+
+def test_paths_and_holdout_blocks_coexist(tmp_path):
+    y = tmp_path / ".council.yml"
+    y.write_text("paths:\n  - src/\nholdout:\n  - runs/a.json\n")
+    cfg = config.load(council_yml=str(y))
+    assert cfg.paths == ["src/"]
+    assert cfg.holdout == ["runs/a.json"]
 
 
 def test_council_yml_overrides_defaults(tmp_path):
