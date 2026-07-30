@@ -17,6 +17,18 @@ MAX_CHUNKS = 6
 _FILE_SPLIT = re.compile(r"(?=^diff --git )", re.M)
 _FILE_NAME = re.compile(r"^diff --git a/(\S+) b/(\S+)", re.M)
 
+_TRUNC_MARKER = "\n… file truncated by preflight (over per-chunk cap) …\n"
+
+
+def _truncate_file(text, cap):
+    """Cut one file's diff text to `cap` chars, on a line boundary, with a marker."""
+    keep = max(0, cap - len(_TRUNC_MARKER))
+    head = text[:keep]
+    nl = head.rfind("\n")
+    if nl > 0:
+        head = head[: nl + 1]
+    return head + _TRUNC_MARKER
+
 
 def split_files(diff):
     """Split a unified diff into per-file units.
@@ -71,7 +83,16 @@ def chunk_diff(diff, chunk_cap=CHUNK_CAP, max_chunks=MAX_CHUNKS):
         if placed:
             continue
         if len(bins) < max_chunks:
-            # New chunk (a single file larger than the cap still gets its own chunk).
+            # New chunk. A single file bigger than the cap is truncated to it:
+            # the cap is a hard per-request budget, and one huge file (a vendored
+            # lockfile, a checked-in .diff fixture) would otherwise build a
+            # prompt far past the model's context window.
+            if size > chunk_cap:
+                f = dict(f, text=_truncate_file(f["text"], chunk_cap))
+                # Claim the whole bin: the leftover slack from truncating is not
+                # room for another file, or a big file would get skipped in
+                # favour of a tiny one that fit in the offcut.
+                size = chunk_cap
             bins.append({"size": size, "files": [f]})
         else:
             skipped.append(f["name"])

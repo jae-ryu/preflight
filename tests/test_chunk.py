@@ -35,8 +35,22 @@ def test_splits_when_over_chunk_cap():
     chunks, skipped = chunk.chunk_diff(d, chunk_cap=20000, max_chunks=6)
     assert len(chunks) > 1
     for ch in chunks:
-        # Each chunk stays within cap (a lone oversized file is the only exception).
-        assert len(ch) <= 20000 or ch.count("diff --git") == 1
+        assert len(ch) <= 20000
+
+
+def test_single_oversized_file_is_truncated_to_cap():
+    # One file far bigger than the cap must still be capped: the chunk cap is a
+    # hard per-request budget, not a best-effort hint. A 2.6M-token prompt built
+    # from one checked-in .diff fixture is what motivated this.
+    d = _file("huge.diff", ["x" * 200] * 500)
+    assert len(d) > 20000
+    chunks, skipped = chunk.chunk_diff(d, chunk_cap=20000, max_chunks=6)
+    assert len(chunks) == 1
+    assert len(chunks[0]) <= 20000
+    assert "truncated by preflight" in chunks[0]
+    # The file is still identifiable as reviewed, not silently dropped.
+    assert chunks[0].startswith("diff --git a/huge.diff")
+    assert skipped == []
 
 
 def test_max_chunks_cap_skips_least_changed():
