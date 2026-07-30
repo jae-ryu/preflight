@@ -40,8 +40,17 @@ REVIEWER_MODEL = models.reviewer_model()     # reasoning task — the reviewers
 OVERSEER_MODEL = models.overseer_model()     # fast task — the overseer
 
 # Reasoning models spend the token budget thinking before they answer; budget big.
-REVIEWER_MAX_TOKENS = 20000
-OVERSEER_MAX_TOKENS = 1500
+# Overridable because the budget is really a VRAM decision, not a model one: on a
+# 16GB card a 20k-token response plus a large diff will not fit in the KV cache
+# alongside the weights, and the failure mode is a truncated, unparseable answer.
+# A local deployment needs to lower this; the hosted default is unchanged.
+REVIEWER_MAX_TOKENS = int(os.environ.get("PREFLIGHT_REVIEWER_MAX_TOKENS") or 20000)
+OVERSEER_MAX_TOKENS = int(os.environ.get("PREFLIGHT_OVERSEER_MAX_TOKENS") or 1500)
+
+
+def model_for_character(character):
+    """Model id for one crew member. Resolved per call, so env changes apply."""
+    return models.model_for_character(character)
 
 
 def api_key():
@@ -189,6 +198,32 @@ def extract_json(text):
     return None  # unbalanced (e.g. truncated JSON)
 
 
+_THINK_RE = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN_RE = re.compile(r"<(think|thinking|reasoning)>.*\Z", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think(text):
+    """Remove inline chain-of-thought blocks from a response body.
+
+    Hosted reasoning models (Kimi via MCloud) return thinking in a separate
+    ``reasoning_content`` field, leaving ``content`` clean. Local runtimes —
+    Ollama's OpenAI-compatible endpoint in particular — have no such field and
+    inline the thinking in ``content`` as ``<think>...</think>``.
+
+    That breaks extraction rather than merely adding noise: ``extract_json``
+    returns the FIRST balanced object it finds, and a model reasoning about the
+    JSON it is about to emit will usually write a draft object inside the think
+    block. The parse then "succeeds" on the draft — wrong findings, wrong
+    severities, no error. Stripping first is what makes local models usable.
+
+    An unterminated block (truncated mid-thought, the common shape when
+    max_tokens runs out) is dropped through to the end.
+    """
+    if not text:
+        return text
+    return _THINK_OPEN_RE.sub("", _THINK_RE.sub("", text)).strip()
+
+
 def _message_of(resp):
     return resp["choices"][0]["message"]
 
@@ -210,9 +245,12 @@ def council_call(model, system, user, max_tokens, node=None):
     resp = post_chat(model, system, user, max_tokens, node=node)
     msg = _message_of(resp)
 
-    data = extract_json(msg.get("content") or "")
+    # strip_think first: a local model's draft JSON inside <think> would
+    # otherwise be the first balanced object extract_json finds, and would be
+    # silently accepted as the answer.
+    data = extract_json(strip_think(msg.get("content") or ""))
     if data is None:
-        data = extract_json(msg.get("reasoning_content") or "")
+        data = extract_json(strip_think(msg.get("reasoning_content") or ""))
     if data is not None:
         _stamp_last(node, True)
         return data, True
@@ -224,8 +262,8 @@ def council_call(model, system, user, max_tokens, node=None):
     repair_node = (node + "-repair") if node is not None else None
     resp2 = post_chat(model, system, repair, max_tokens, node=repair_node)
     msg2 = _message_of(resp2)
-    data = (extract_json(msg2.get("content") or "")
-            or extract_json(msg2.get("reasoning_content") or ""))
+    data = (extract_json(strip_think(msg2.get("content") or ""))
+            or extract_json(strip_think(msg2.get("reasoning_content") or "")))
     ok = data is not None
     _stamp_last(repair_node, ok)
     return (data, True) if ok else (None, False)
