@@ -306,7 +306,7 @@ def _reviewer(name, system, diff, repo_map=None, node=None):
     else:
         user = f"Review this diff:\n\n{diff}"
     data, ok = api.council_call(
-        api.REVIEWER_MODEL,
+        api.model_for_character(name),
         coach(system, name),
         user,
         api.REVIEWER_MAX_TOKENS,

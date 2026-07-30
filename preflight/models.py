@@ -54,3 +54,39 @@ def reviewer_model():
 def overseer_model():
     """Model for the overseer + summary compression (fast task)."""
     return _env("PREFLIGHT_OVERSEER_MODEL") or model_for(TASK_FAST)
+
+
+# ── per-character resolution ────────────────────────────────────────────────
+# Task→model is the right granularity against a hosted gateway, where both
+# reviewers can share one strong reasoning model. It is the wrong granularity
+# for a local council: running Roaster and Mammoth on the *same* local weights
+# produces correlated findings, which reads as two independent reviewers
+# agreeing when it is really one reviewer answering twice. Distinct models per
+# character is what makes the second opinion worth having.
+#
+# Mirrors the existing PREFLIGHT_{ROASTER,MAMMOTH,MC}_EXTRA coaching convention.
+# Unset falls back to the task model, so hosted runs are unchanged.
+
+CHARACTER_ROASTER = "roaster"
+CHARACTER_MAMMOTH = "mammoth"
+CHARACTER_MC = "mc"
+
+_CHARACTER_ENV = {
+    CHARACTER_ROASTER: "PREFLIGHT_ROASTER_MODEL",
+    CHARACTER_MAMMOTH: "PREFLIGHT_MAMMOTH_MODEL",
+    CHARACTER_MC: "PREFLIGHT_MC_MODEL",
+}
+
+
+def model_for_character(character):
+    """Resolve one crew member to a model id.
+
+    Precedence: the character's own env var, else the task model for its role
+    (MC is the fast task; the reviewers are the reasoning task).
+    """
+    explicit = _env(_CHARACTER_ENV.get(character, ""))
+    if explicit:
+        return explicit
+    if character == CHARACTER_MC:
+        return overseer_model()
+    return reviewer_model()
