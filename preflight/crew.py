@@ -7,7 +7,7 @@ The council. Three characters, kept in voice — the voices ARE the product.
 
 Model assignment is by *task*, not baked-in names: the reviewers run the
 ``reasoning`` task (``api.REVIEWER_MODEL``) and Mission Control + summary
-compression run the ``fast`` task (``api.OVERSEER_MODEL``). Both resolve through
+compression run the ``fast`` task (``api.model_for_character("mc")``). Both resolve through
 ``models`` (env-overridable), so the shared BOS Modular Cloud registry can steer
 which model serves which task without editing the crew.
 """
@@ -356,7 +356,7 @@ def compress_summaries(summaries):
     )
     try:
         resp = api.post_chat(
-            api.OVERSEER_MODEL,
+            api.model_for_character("mc"),
             system,
             f"Summaries:\n{joined}",
             120,
@@ -424,7 +424,7 @@ def run_overseer(goal, roaster, mammoth, loc=None):
     )
     loc_line = f"PR changed lines (added+removed): {loc}.\n" if loc is not None else ""
     data, ok = api.council_call(
-        api.OVERSEER_MODEL,
+        api.model_for_character("mc"),
         coach(MC_SYS, "mission-control"),
         f"Goal score is {goal}. {loc_line}Reviewer reports:\n{packet}",
         api.OVERSEER_MAX_TOKENS,

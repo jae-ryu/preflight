@@ -107,3 +107,30 @@ def test_draft_json_inside_think_is_not_mistaken_for_the_answer():
 def test_multiple_think_blocks_all_removed():
     reply = '<think>one</think>noise<think>two</think>{"summary": "final"}'
     assert api.extract_json(api.strip_think(reply))["summary"] == "final"
+
+
+# ── the overseer must honour its override at EVERY call site ────────────────
+
+def test_mission_control_alias_resolves_to_mc_override(monkeypatch):
+    """crew.py labels the overseer 'mission-control'; the model map says 'mc'.
+
+    Both must land on the same override. When they did not, the MC and
+    chunk-summary calls silently fell back to the hosted default and a local
+    run died with 'model google/gemma-4-31b-it not found' — after the
+    reviewers had already spent minutes of GPU time.
+    """
+    monkeypatch.setenv("PREFLIGHT_MC_MODEL", "qwen2.5:7b")
+    for label in ("mc", "mission-control", "mission_control", "overseer", "MISSION-CONTROL"):
+        assert models.model_for_character(label) == "qwen2.5:7b", label
+
+
+def test_no_call_site_still_pins_the_module_level_overseer():
+    """Guard the regression directly: crew must not read api.OVERSEER_MODEL.
+
+    A module-level constant is resolved at import, so it cannot honour an
+    override set later — which is what made this fail only at runtime, only
+    locally, and only after the expensive part had already run.
+    """
+    import pathlib
+    crew_src = pathlib.Path(__file__).resolve().parent.parent / "preflight" / "crew.py"
+    assert "api.OVERSEER_MODEL" not in crew_src.read_text()
