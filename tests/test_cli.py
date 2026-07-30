@@ -51,7 +51,7 @@ def test_contract_shape_and_hold(monkeypatch):
     assert set(result["totals"]) == {"wall_ms", "tokens"}
     assert set(result["totals"]["tokens"]) == {"prompt", "completion", "reasoning"}
     assert result["meta"]["models"] == {
-        "reviewers": "moonshotai/Kimi-K2.6", "overseer": "google/gemma-4-31B-it"}
+        "reviewers": api.REVIEWER_MODEL, "overseer": api.OVERSEER_MODEL}
     assert result["meta"]["chunks"] == 1  # small diff -> single pass
     assert result["meta"]["skipped_files"] == []
     # blocker/nit counts populated; findings carry deterministic tiers.

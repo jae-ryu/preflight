@@ -7,9 +7,9 @@ Three characters read a diff, argue, and call **GO / HOLD** against a repo-owner
 
 | | Character | Model | Beat |
 |---|---|---|---|
-| 🔥 | **ROASTER** | `moonshotai/Kimi-K2.6` | Bugs & correctness — logic errors, crashes, races, unhandled failures, leaks, security. Punchy, roasts the flaw not the person, ends useful. |
-| 🦣 | **MAMMOTH** | `moonshotai/Kimi-K2.6` | Fine-tooth comb — architecture, API/contract design, naming, **missing tests**, docs, consistency. Calm, precise. |
-| 🧑‍🚀 | **MISSION CONTROL** | `google/gemma-4-31B-it` | Overseer — weighs both reports, scores, calls the launch. Caveman-brief exec summary. |
+| 🔥 | **ROASTER** | `moonshotai/kimi-k2.6` | Bugs & correctness — logic errors, crashes, races, unhandled failures, leaks, security. Punchy, roasts the flaw not the person, ends useful. |
+| 🦣 | **MAMMOTH** | `moonshotai/kimi-k2.6` | Fine-tooth comb — architecture, API/contract design, naming, **missing tests**, docs, consistency. Calm, precise. |
+| 🧑‍🚀 | **MISSION CONTROL** | `google/gemma-4-31b-it` | Overseer — weighs both reports, scores, calls the launch. Caveman-brief exec summary. |
 
 Kimi K2.6 is a *reasoning* model: its response carries both `content` and
 `reasoning_content` and spends ~6-8k tokens thinking before it answers. Preflight
@@ -75,7 +75,7 @@ reviewers unparseable).
     "roaster": {"summary": "...", "findings": [{"sev":"high|med|low","tier":"blocker|nit","where":"file:line","issue":"...","say":"in-character quote"}], "parse_ok": true},
     "mammoth": {"summary": "...", "findings": [...], "parse_ok": true}
   },
-  "meta": {"models": {"reviewers":"moonshotai/Kimi-K2.6","overseer":"google/gemma-4-31B-it"}, "diff_bytes": 111888, "truncated": false, "chunks": 6, "skipped_files": []}
+  "meta": {"models": {"reviewers":"moonshotai/kimi-k2.6","overseer":"google/gemma-4-31b-it"}, "diff_bytes": 111888, "truncated": false, "chunks": 6, "skipped_files": []}
 }
 ```
 
