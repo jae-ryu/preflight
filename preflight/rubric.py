@@ -26,7 +26,13 @@ in code regardless of what the model said.
 # produced its score, so a rubric change shows up on the trend as a labelled
 # discontinuity (never averaged through), and an anchor set can be dual-scored
 # across versions to measure the exact offset (Δrubric). See the tune-up report §06.
+import hashlib
+
 RUBRIC_VERSION = 1
+
+# Human-facing version of the same thing. Pre-1.0 on purpose: the rubric is
+# still being tuned, and saying so is more honest than implying stability.
+RUBRIC_SEMVER = "0.1.0"
 
 CLAMP_BAND = 5
 
@@ -38,6 +44,30 @@ DEDUCT_BLOCKER_DESIGN = 8  # MAMMOTH high
 DEDUCT_NIT_MED = 3
 DEDUCT_NIT_LOW = 1
 NIT_CAP = 10
+
+
+def rubric_fingerprint():
+    """Hash of every constant that can change a score.
+
+    RUBRIC_VERSION only helps if somebody remembers to bump it. A weight edited
+    without a bump silently makes old and new scores incomparable, and nothing
+    in the data shows it — the trend just bends. The fingerprint is derived from
+    the constants themselves, so that change is visible whether or not anyone
+    remembered.
+
+    Compare fingerprints, not versions, before averaging scores across runs.
+    """
+    payload = "|".join(f"{k}={v}" for k, v in sorted({
+        "RUBRIC_VERSION": RUBRIC_VERSION,
+        "RUBRIC_SEMVER": RUBRIC_SEMVER,
+        "CLAMP_BAND": CLAMP_BAND,
+        "DEDUCT_BLOCKER_CORRECTNESS": DEDUCT_BLOCKER_CORRECTNESS,
+        "DEDUCT_BLOCKER_DESIGN": DEDUCT_BLOCKER_DESIGN,
+        "DEDUCT_NIT_MED": DEDUCT_NIT_MED,
+        "DEDUCT_NIT_LOW": DEDUCT_NIT_LOW,
+        "NIT_CAP": NIT_CAP,
+    }.items()))
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
 
 def _sev(f):
@@ -140,4 +170,6 @@ def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goa
         "blockers": blockers,
         "nits": nits,
         "rubric_version": RUBRIC_VERSION,
+        "rubric_semver": RUBRIC_SEMVER,
+        "rubric_fingerprint": rubric_fingerprint(),
     }
