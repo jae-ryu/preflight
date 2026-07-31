@@ -144,3 +144,44 @@ def test_bad_model_score_defaults_to_rubric():
     out = rubric.finalize(None, "GO", r, [], goal=85)
     assert out["score"] == 97
     assert out["verdict"] == "GO"
+
+
+# ---------- parse failure must never read as approval ----------
+# Regression net for the false-GO bug: a reviewer that crashed mid-JSON returns
+# zero findings, which deducts nothing, which used to score a perfect 100/GO.
+
+def test_unparsed_reviewer_cannot_go():
+    # Clean-looking run: no findings, model claims 100, goal easily met.
+    # Roaster never parsed, so this must NOT be GO.
+    out = rubric.finalize(100, "GO", [], [], goal=50, roaster_ok=False)
+    assert out["verdict"] == "HOLD"
+    assert out["trustworthy"] is False
+    assert out["unscored"] == ["roaster"]
+
+
+def test_unparsed_mammoth_cannot_go():
+    out = rubric.finalize(100, "GO", [], [], goal=50, mammoth_ok=False)
+    assert out["verdict"] == "HOLD"
+    assert out["unscored"] == ["mammoth"]
+
+
+def test_both_unparsed_named_in_unscored():
+    out = rubric.finalize(100, "GO", [], [], goal=50,
+                          roaster_ok=False, mammoth_ok=False)
+    assert out["verdict"] == "HOLD"
+    assert out["unscored"] == ["roaster", "mammoth"]
+
+
+def test_parsed_clean_run_still_goes():
+    # The fix must not turn genuinely clean reviews into HOLD.
+    out = rubric.finalize(100, "GO", [], [], goal=50)
+    assert out["verdict"] == "GO"
+    assert out["trustworthy"] is True
+    assert out["unscored"] == []
+
+
+def test_unparsed_lane_cannot_be_rescued_by_high_score():
+    # Even a perfect deterministic rubric cannot promote an unreadable review.
+    out = rubric.finalize(100, "GO", [], [], goal=0, roaster_ok=False)
+    assert out["score"] == 100        # score is still reported honestly...
+    assert out["verdict"] == "HOLD"   # ...but the GATE refuses to pass it.

@@ -271,7 +271,11 @@ def _score_data(data):
         reviewers = data.get("reviewers", {})
         r = reviewers.get("roaster", {}).get("findings", [])
         m = reviewers.get("mammoth", {}).get("findings", [])
-        diag = dimensions.breakdown(r, m)
+        diag = dimensions.breakdown(
+            r, m,
+            roaster_ok=reviewers.get("roaster", {}).get("parse_ok", True),
+            mammoth_ok=reviewers.get("mammoth", {}).get("parse_ok", True),
+        )
         grader = diag["grader_scores"]
         dims = diag["dimension_scores"]
     grader = dict(grader)
