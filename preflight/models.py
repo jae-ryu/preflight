@@ -78,15 +78,33 @@ _CHARACTER_ENV = {
 }
 
 
+# The crew refers to the overseer by two names: "mc" in the model map and
+# "mission-control" in the coaching map. Both must resolve, or a per-character
+# override silently misses one call site and that call quietly falls back to
+# the hosted default — which is exactly how this bug shipped.
+_CHARACTER_ALIASES = {
+    "mission-control": CHARACTER_MC,
+    "mission_control": CHARACTER_MC,
+    "overseer": CHARACTER_MC,
+}
+
+
+def canonical_character(character):
+    """Normalise a crew-member label to its canonical key."""
+    c = (character or "").strip().lower()
+    return _CHARACTER_ALIASES.get(c, c)
+
+
 def model_for_character(character):
     """Resolve one crew member to a model id.
 
     Precedence: the character's own env var, else the task model for its role
     (MC is the fast task; the reviewers are the reasoning task).
     """
-    explicit = _env(_CHARACTER_ENV.get(character, ""))
+    key = canonical_character(character)
+    explicit = _env(_CHARACTER_ENV.get(key, ""))
     if explicit:
         return explicit
-    if character == CHARACTER_MC:
+    if key == CHARACTER_MC:
         return overseer_model()
     return reviewer_model()
