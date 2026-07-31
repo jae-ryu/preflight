@@ -126,20 +126,47 @@ def grader_breakdown(findings, grader):
     return dim_scores, grader_score
 
 
-def breakdown(roaster_findings, mammoth_findings):
+def breakdown(roaster_findings, mammoth_findings,
+              roaster_ok=True, mammoth_ok=True):
     """Full diagnostic breakout across both graders.
 
     Returns:
       {
         "dimension_scores": {"roaster": {dim: score}, "mammoth": {dim: score}},
         "grader_scores":    {"roaster": int, "mammoth": int},
+        "unscored":         ["mammoth", ...]   # lanes whose review did not parse
       }
     Mission Control's grader score is the finalized aggregate and is added by
     the caller (it is the gate number, computed in rubric.finalize).
+
+    ``roaster_ok`` / ``mammoth_ok`` carry the reviewer's ``parse_ok``. They
+    matter because a lane that failed to parse yields an EMPTY finding list, and
+    an empty finding list is indistinguishable here from a genuinely clean
+    review — both deduct nothing and score 100 on every dimension. That is
+    exactly backwards: an unreadable review is the *least* evidence of quality,
+    and scoring it perfect inflates the gate number in the most dangerous
+    direction. Measured on the first backfill round, 4 runs were scored 100
+    across every dimension purely because the reviewer output was truncated
+    mid-JSON.
+
+    An unparsed lane therefore scores nothing at all: its dimensions are None
+    and it is named in ``unscored`` so the caller can route the run to VERIFY
+    rather than silently averaging a fabricated 100 into the aggregate.
     """
-    r_dims, r_score = grader_breakdown(roaster_findings, "roaster")
-    m_dims, m_score = grader_breakdown(mammoth_findings, "mammoth")
+    lanes = (("roaster", roaster_findings, roaster_ok),
+             ("mammoth", mammoth_findings, mammoth_ok))
+    dim_scores, grader_scores, unscored = {}, {}, []
+    for name, findings, ok in lanes:
+        if not ok:
+            dim_scores[name] = {d: None for d in LANES.get(name, [])}
+            grader_scores[name] = None
+            unscored.append(name)
+            continue
+        dims, score = grader_breakdown(findings, name)
+        dim_scores[name] = dims
+        grader_scores[name] = score
     return {
-        "dimension_scores": {"roaster": r_dims, "mammoth": m_dims},
-        "grader_scores": {"roaster": r_score, "mammoth": m_score},
+        "dimension_scores": dim_scores,
+        "grader_scores": grader_scores,
+        "unscored": unscored,
     }

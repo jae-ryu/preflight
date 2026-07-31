@@ -189,11 +189,19 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
         roaster["findings"],
         mammoth["findings"],
         goal,
+        roaster_ok=roaster.get("parse_ok", True),
+        mammoth_ok=mammoth.get("parse_ok", True),
     )
 
     # Per-grader / per-dimension diagnostic breakout. Mission Control's grader
     # score IS the finalized aggregate (the gate number).
-    diag = dimensions.breakdown(roaster["findings"], mammoth["findings"])
+    # parse_ok is threaded in so a lane whose review never parsed scores nothing
+    # rather than a fabricated 100 (see dimensions.breakdown).
+    diag = dimensions.breakdown(
+        roaster["findings"], mammoth["findings"],
+        roaster_ok=roaster.get("parse_ok", True),
+        mammoth_ok=mammoth.get("parse_ok", True),
+    )
     diag["grader_scores"]["mission_control"] = final["score"]
 
     wall_ms = int((time.time() - wall_start) * 1000)
