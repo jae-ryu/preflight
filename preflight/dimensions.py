@@ -126,20 +126,36 @@ def grader_breakdown(findings, grader):
     return dim_scores, grader_score
 
 
-def breakdown(roaster_findings, mammoth_findings):
+def breakdown(roaster_findings, mammoth_findings,
+              roaster_ok=True, mammoth_ok=True):
     """Full diagnostic breakout across both graders.
 
     Returns:
       {
         "dimension_scores": {"roaster": {dim: score}, "mammoth": {dim: score}},
         "grader_scores":    {"roaster": int, "mammoth": int},
+        "unscored":         ["mammoth", ...]   # lanes whose review did not parse
       }
     Mission Control's grader score is the finalized aggregate and is added by
     the caller (it is the gate number, computed in rubric.finalize).
+
+    A lane with ``*_ok`` False (review never parsed) has empty findings, which
+    would score 100; it scores None instead and is named in ``unscored``.
     """
-    r_dims, r_score = grader_breakdown(roaster_findings, "roaster")
-    m_dims, m_score = grader_breakdown(mammoth_findings, "mammoth")
+    lanes = (("roaster", roaster_findings, roaster_ok),
+             ("mammoth", mammoth_findings, mammoth_ok))
+    dim_scores, grader_scores, unscored = {}, {}, []
+    for name, findings, ok in lanes:
+        if not ok:
+            dim_scores[name] = {d: None for d in LANES.get(name, [])}
+            grader_scores[name] = None
+            unscored.append(name)
+            continue
+        dims, score = grader_breakdown(findings, name)
+        dim_scores[name] = dims
+        grader_scores[name] = score
     return {
-        "dimension_scores": {"roaster": r_dims, "mammoth": m_dims},
-        "grader_scores": {"roaster": r_score, "mammoth": m_score},
+        "dimension_scores": dim_scores,
+        "grader_scores": grader_scores,
+        "unscored": unscored,
     }

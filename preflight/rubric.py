@@ -141,10 +141,16 @@ def _clamp(value, lo, hi):
     return max(lo, min(hi, value))
 
 
-def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goal):
+def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goal,
+             roaster_ok=True, mammoth_ok=True):
     """Resolve the final (score, verdict).
 
-    Returns a dict: {score, verdict, rubric_score, model_score, blockers, nits}.
+    Returns a dict: {score, verdict, rubric_score, model_score, blockers, nits,
+    unscored, trustworthy}.
+
+    A lane with ``*_ok`` False (review never parsed) has empty findings, which
+    deduct nothing: it forces HOLD, is named in ``unscored`` and clears
+    ``trustworthy`` (held because unknown, not because bad).
     """
     rub = rubric_score(roaster_findings, mammoth_findings)
 
@@ -159,8 +165,11 @@ def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goa
 
     blockers, nits = count_tiers(roaster_findings, mammoth_findings)
 
-    # Deterministic verdict. GO iff score >= goal AND zero blockers.
-    verdict = "GO" if (final_score >= goal and blockers == 0) else "HOLD"
+    unscored = [n for n, ok in (("roaster", roaster_ok), ("mammoth", mammoth_ok))
+                if not ok]
+
+    verdict = ("GO" if (final_score >= goal and blockers == 0 and not unscored)
+               else "HOLD")
 
     return {
         "score": final_score,
@@ -169,6 +178,8 @@ def finalize(model_score, model_verdict, roaster_findings, mammoth_findings, goa
         "model_score": ms,
         "blockers": blockers,
         "nits": nits,
+        "unscored": unscored,
+        "trustworthy": not unscored,
         "rubric_version": RUBRIC_VERSION,
         "rubric_semver": RUBRIC_SEMVER,
         "rubric_fingerprint": rubric_fingerprint(),

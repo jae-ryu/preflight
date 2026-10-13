@@ -271,7 +271,11 @@ def _score_data(data):
         reviewers = data.get("reviewers", {})
         r = reviewers.get("roaster", {}).get("findings", [])
         m = reviewers.get("mammoth", {}).get("findings", [])
-        diag = dimensions.breakdown(r, m)
+        diag = dimensions.breakdown(
+            r, m,
+            roaster_ok=reviewers.get("roaster", {}).get("parse_ok", True),
+            mammoth_ok=reviewers.get("mammoth", {}).get("parse_ok", True),
+        )
         grader = diag["grader_scores"]
         dims = diag["dimension_scores"]
     grader = dict(grader)
@@ -284,6 +288,9 @@ def _dim_cell(dims):
     parts = []
     for name, val in dims.items():
         label = name.replace("_", "-")
+        if val is None:
+            parts.append(f"{label} n/a")
+            continue
         parts.append(f"{label} **{val}**" if val <= WEAK_DIM else f"{label} {val}")
     return " · ".join(parts)
 
@@ -304,6 +311,8 @@ def score_table(data):
         glyph = GRADER_GLYPH[key]
         name = GRADER_NAME[key]
         sc = grader.get(key, 0)
+        if sc is None:
+            sc = "unscored (review did not parse)"
         cell = _dim_cell(dims.get(key, {}))
         out.append(f"| {glyph} {name} | {sc} | {cell} |")
     mc = grader.get("mission_control", data.get("score", 0))
@@ -519,7 +528,7 @@ def footer(meta, run_url=None, trace=None, totals=None):
         out.append(note)
         out.append("")
     out.append("---")
-    tail = "Preflight council · Kimi K2.6 + Gemma 4 on Modular Cloud"
+    tail = "Preflight council · GLM-5.3 + Gemma 4 on Modular Cloud"
     if trace:
         tail += f" · {_totals_line(trace, totals)}"
     if run_url:

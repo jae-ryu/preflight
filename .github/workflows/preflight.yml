@@ -9,6 +9,26 @@ permissions:
   pull-requests: write
 
 jobs:
+  # The council job calls a live model, so it can fail for reasons that have
+  # nothing to do with the diff — a provider 429 exits 2 as an infrastructure
+  # failure. That made "CI green" unable to tell a broken change from a rate
+  # limit, and meant the test suite never ran in CI at all. This job is the
+  # deterministic half: no network, no secrets, no flake.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test deps
+        run: python3 -m pip install --quiet --disable-pip-version-check pytest
+
+      - name: Run test suite
+        run: python3 -m pytest tests/ -q
+
   council:
     runs-on: ubuntu-latest
     steps:
