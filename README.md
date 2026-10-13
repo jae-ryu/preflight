@@ -7,11 +7,11 @@ Three characters read a diff, argue, and call **GO / HOLD** against a repo-owner
 
 | | Character | Model | Beat |
 |---|---|---|---|
-| 🔥 | **ROASTER** | `moonshotai/kimi-k2.6` | Bugs & correctness — logic errors, crashes, races, unhandled failures, leaks, security. Punchy, roasts the flaw not the person, ends useful. |
-| 🦣 | **MAMMOTH** | `moonshotai/kimi-k2.6` | Fine-tooth comb — architecture, API/contract design, naming, **missing tests**, docs, consistency. Calm, precise. |
+| 🔥 | **ROASTER** | `zai-org/glm-5.3` | Bugs & correctness — logic errors, crashes, races, unhandled failures, leaks, security. Punchy, roasts the flaw not the person, ends useful. |
+| 🦣 | **MAMMOTH** | `zai-org/glm-5.3` | Fine-tooth comb — architecture, API/contract design, naming, **missing tests**, docs, consistency. Calm, precise. |
 | 🧑‍🚀 | **MISSION CONTROL** | `google/gemma-4-31b-it` | Overseer — weighs both reports, scores, calls the launch. Caveman-brief exec summary. |
 
-Kimi K2.6 is a *reasoning* model: its response carries both `content` and
+The reviewer model is a *reasoning* model: its response carries both `content` and
 `reasoning_content` and spends ~6-8k tokens thinking before it answers. Preflight
 budgets `max_tokens=20000` and parses defensively — `content` first, then JSON out of
 `reasoning_content`, then one repair-retry that asks the model to re-emit ONLY the JSON.

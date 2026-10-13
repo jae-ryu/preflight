@@ -10,7 +10,7 @@ comes from MODULAR_BASE_URL and the models resolve through `models` (which reads
 the environment, so the shared registry can steer task→model without a code
 change). Preflight is one application of Modular Cloud, not the owner.
 
-Kimi K2.6 is a *reasoning* model: the response `message` carries BOTH `content`
+The reviewer model is a *reasoning* model: the response `message` carries BOTH `content`
 and `reasoning_content`, and `usage.completion_tokens_details.reasoning_tokens`
 burns ~6-8k tokens BEFORE the answer. If max_tokens is too small the whole budget
 is spent thinking and `content` comes back empty. We therefore budget big

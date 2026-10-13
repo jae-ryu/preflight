@@ -139,19 +139,8 @@ def breakdown(roaster_findings, mammoth_findings,
     Mission Control's grader score is the finalized aggregate and is added by
     the caller (it is the gate number, computed in rubric.finalize).
 
-    ``roaster_ok`` / ``mammoth_ok`` carry the reviewer's ``parse_ok``. They
-    matter because a lane that failed to parse yields an EMPTY finding list, and
-    an empty finding list is indistinguishable here from a genuinely clean
-    review — both deduct nothing and score 100 on every dimension. That is
-    exactly backwards: an unreadable review is the *least* evidence of quality,
-    and scoring it perfect inflates the gate number in the most dangerous
-    direction. Measured on the first backfill round, 4 runs were scored 100
-    across every dimension purely because the reviewer output was truncated
-    mid-JSON.
-
-    An unparsed lane therefore scores nothing at all: its dimensions are None
-    and it is named in ``unscored`` so the caller can route the run to VERIFY
-    rather than silently averaging a fabricated 100 into the aggregate.
+    A lane with ``*_ok`` False (review never parsed) has empty findings, which
+    would score 100; it scores None instead and is named in ``unscored``.
     """
     lanes = (("roaster", roaster_findings, roaster_ok),
              ("mammoth", mammoth_findings, mammoth_ok))

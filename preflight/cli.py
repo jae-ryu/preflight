@@ -195,8 +195,6 @@ def build_result(diff, goal, cap=DEFAULT_CAP, executor=None, repo_map=None):
 
     # Per-grader / per-dimension diagnostic breakout. Mission Control's grader
     # score IS the finalized aggregate (the gate number).
-    # parse_ok is threaded in so a lane whose review never parsed scores nothing
-    # rather than a fabricated 100 (see dimensions.breakdown).
     diag = dimensions.breakdown(
         roaster["findings"], mammoth["findings"],
         roaster_ok=roaster.get("parse_ok", True),

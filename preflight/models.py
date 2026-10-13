@@ -27,7 +27,7 @@ TASK_FAST = "fast"
 # a launcher wired to the shared registry can export the env vars below to steer
 # task→model without editing anything here.
 DEFAULT_MODELS = {
-    TASK_REASONING: "moonshotai/kimi-k2.6",
+    TASK_REASONING: "zai-org/glm-5.3",
     TASK_FAST: "google/gemma-4-31b-it",
 }
 
